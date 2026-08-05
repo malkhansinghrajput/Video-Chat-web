@@ -17,7 +17,10 @@ const base = {
 };
 
 function makeClient(db: number, name: string): Redis {
-  const client = new Redis({ ...base, db });
+  // Free tier / Managed Redis often only supports DB 0.
+  // Using keyPrefix to simulate logical databases.
+  const prefix = name === 'pub' || name === 'sub' ? '' : `${name}:`;
+  const client = new Redis({ ...base, db: 0, keyPrefix: prefix });
   client.on('connect', () => logger.info(`Redis[${name}]: connected`));
   client.on('error', (e: Error) => logger.error(`Redis[${name}]: error`, { error: e.message }));
   return client;
