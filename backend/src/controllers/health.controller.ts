@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { getDatabaseHealth } from '../config/database';
 import { getRedisHealth } from '../config/redis';
-import { queueService } from '../services/matching.service';
+import { queueService, matchingEngine } from '../services/matching.service';
 import { redisAnalytics } from '../config/redis';
 import { RedisKeys } from '../constants';
 
@@ -36,13 +36,15 @@ export class HealthController {
       getRedisHealth(),
     ]);
 
-    const isReady = dbHealth.status === 'connected' && redisHealth.status === 'healthy';
+    const isMatchingEngineHealthy = matchingEngine.isHealthy;
+    const isReady = dbHealth.status === 'connected' && redisHealth.status === 'healthy' && isMatchingEngineHealthy;
 
     res.status(isReady ? 200 : 503).json({
       ready: isReady,
       checks: {
         mongodb: dbHealth,
         redis: redisHealth,
+        matchingEngine: isMatchingEngineHealthy ? 'running' : 'stopped',
       },
       timestamp: Date.now(),
     });
@@ -64,7 +66,8 @@ export class HealthController {
       10,
     );
 
-    const allHealthy = dbHealth.status === 'connected' && redisHealth.status === 'healthy';
+    const isMatchingEngineHealthy = matchingEngine.isHealthy;
+    const allHealthy = dbHealth.status === 'connected' && redisHealth.status === 'healthy' && isMatchingEngineHealthy;
 
     res.status(allHealthy ? 200 : 503).json({
       status: allHealthy ? 'healthy' : 'degraded',
@@ -75,11 +78,13 @@ export class HealthController {
       checks: {
         mongodb: dbHealth,
         redis: redisHealth,
+        matchingEngine: isMatchingEngineHealthy ? 'running' : 'stopped',
       },
       stats: {
         concurrentUsers,
         queueDepth,
         memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        cpuUsage: process.cpuUsage(),
       },
     });
   }

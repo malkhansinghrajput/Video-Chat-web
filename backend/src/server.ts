@@ -15,6 +15,7 @@ import { env } from './config/env';
 // ─────────────────────────────────────────────
 
 async function bootstrap(): Promise<void> {
+  const startTime = Date.now();
   logger.info('🚀 Starting Video Chat Backend...', { env: env.NODE_ENV, port: env.PORT });
 
   // ── Connect Dependencies ──────────────────
@@ -28,8 +29,9 @@ async function bootstrap(): Promise<void> {
   try {
     await connectDatabase();
   } catch (err) {
-    logger.warn('MongoDB connection failed — continuing (non-critical for dev)', { error: String(err) });
-    // Don't exit — Redis-only mode usable for development
+    // connectDatabase handles exiting in production if it fails.
+    logger.error('Failed to connect to MongoDB', { error: String(err) });
+    process.exit(1);
   }
 
   // ── HTTP Server ───────────────────────────
@@ -60,22 +62,48 @@ async function bootstrap(): Promise<void> {
 
   // ── Listen ───────────────────────────────
   httpServer.listen(env.PORT, () => {
-    logger.info(`✅ Server listening on port ${env.PORT}`);
-    logger.info(`   Health:    http://localhost:${env.PORT}/health`);
-    logger.info(`   API:       http://localhost:${env.PORT}/api/v1`);
-    logger.info(`   Socket.IO: ws://localhost:${env.PORT}`);
+    const duration = Date.now() - startTime;
+    const memory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    
+    logger.info(`\n` +
+      `=========================================\n` +
+      `✅ SYSTEM READY [${env.NODE_ENV.toUpperCase()}]\n` +
+      `=========================================\n` +
+      `  Port:       ${env.PORT}\n` +
+      `  Node:       ${process.version}\n` +
+      `  Duration:   ${duration}ms\n` +
+      `  Heap:       ${memory} MB\n` +
+      `  API:        http://localhost:${env.PORT}/api/v1\n` +
+      `  Health:     http://localhost:${env.PORT}/health\n` +
+      `  Socket.IO:  ws://localhost:${env.PORT}\n` +
+      `=========================================`
+    );
   });
 
   // ── Graceful Shutdown ─────────────────────
+  let isShuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
     logger.info(`Received ${signal} — shutting down gracefully...`);
 
+    // 1. Stop Matching Engine
     matchingEngine.stop();
 
-    httpServer.close(async () => {
-      logger.info('HTTP server closed');
+    // 2. Stop accepting new requests
+    httpServer.close(async (err) => {
+      if (err) logger.error('Error closing HTTP server', { error: err.message });
+      else logger.info('HTTP server closed');
+      
       try {
+        // 3. Disconnect existing sockets
+        io.disconnectSockets(true);
+        logger.info('Socket.IO clients disconnected');
+        
+        // 4. Close DBs
         await Promise.all([disconnectDatabase(), disconnectRedis()]);
+        
         logger.info('All connections closed. Goodbye! 👋');
         process.exit(0);
       } catch (err) {
@@ -86,9 +114,9 @@ async function bootstrap(): Promise<void> {
 
     // Force exit after 10s
     setTimeout(() => {
-      logger.error('Forced shutdown after timeout');
+      logger.error('Forced shutdown after 10s timeout');
       process.exit(1);
-    }, 10_000);
+    }, 10_000).unref();
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -96,11 +124,12 @@ async function bootstrap(): Promise<void> {
 
   process.on('uncaughtException', (err) => {
     logger.error('Uncaught exception', { error: err.message, stack: err.stack });
-    process.exit(1);
+    shutdown('uncaughtException');
   });
 
   process.on('unhandledRejection', (reason) => {
     logger.error('Unhandled promise rejection', { reason: String(reason) });
+    shutdown('unhandledRejection');
   });
 }
 

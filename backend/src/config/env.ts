@@ -51,6 +51,16 @@ const EnvSchema = z.object({
 
   METRICS_ENABLED: z.string().transform((v) => v === 'true').default('true'),
   METRICS_PORT: z.coerce.number().default(9101),
+}).refine((data) => {
+  if (data.NODE_ENV === 'production') {
+    if (data.SESSION_HMAC_SECRET === 'dev-secret-change-in-production-12345') return false;
+    if (data.TURN_SERVER_SECRET === 'dev-turn-secret') return false;
+    if (data.MONGODB_URI.includes('localhost')) return false;
+    if (data.REDIS_HOST.includes('localhost')) return false;
+  }
+  return true;
+}, {
+  message: "Production environment MUST use real secrets and remote databases, not development defaults.",
 });
 
 export type Env = z.infer<typeof EnvSchema>;

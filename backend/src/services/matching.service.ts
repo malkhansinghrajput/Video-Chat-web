@@ -231,6 +231,10 @@ export class MatchingEngine {
     logger.info('MatchingEngine: stopped');
   }
 
+  get isHealthy(): boolean {
+    return this.isRunning;
+  }
+
   private poll(): void {
     if (!this.isRunning) return;
     this.runMatchingCycle()

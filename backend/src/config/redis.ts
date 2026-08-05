@@ -9,6 +9,7 @@ const base = {
   tls: env.REDIS_TLS ? {} : undefined,
   maxRetriesPerRequest: 3,
   connectTimeout: 10_000,
+  keepAlive: 10000,
   lazyConnect: true,
   retryStrategy: (times: number) => {
     if (times > 10) return null;
@@ -16,34 +17,30 @@ const base = {
   },
 };
 
-function makeClient(db: number, name: string): Redis {
-  // Free tier / Managed Redis often only supports DB 0.
-  // Using keyPrefix to simulate logical databases.
-  const prefix = name === 'pub' || name === 'sub' ? '' : `${name}:`;
-  const client = new Redis({ ...base, db: 0, keyPrefix: prefix });
-  client.on('connect', () => logger.info(`Redis[${name}]: connected`));
-  client.on('error', (e: Error) => logger.error(`Redis[${name}]: error`, { error: e.message }));
-  return client;
-}
+// Main shared client for all data operations
+export const redisMain = new Redis({ ...base, db: 0 });
+redisMain.on('connect', () => logger.info(`Redis[main]: connected`));
+redisMain.on('error', (e: Error) => logger.error(`Redis[main]: error`, { error: e.message }));
 
-// One client per logical database (per architecture)
-export const redisQueues    = makeClient(0, 'queues');
-export const redisSessions  = makeClient(1, 'sessions');
-export const redisPresence  = makeClient(2, 'presence');
-export const redisRateLimit = makeClient(3, 'ratelimit');
-export const redisAnalytics = makeClient(5, 'analytics');
+// Pub/Sub dedicated clients
+export const redisPub = new Redis({ ...base, db: 0 });
+redisPub.on('connect', () => logger.info(`Redis[pub]: connected`));
+redisPub.on('error', (e: Error) => logger.error(`Redis[pub]: error`, { error: e.message }));
 
-// Pub/Sub dedicated client
-export const redisPub = makeClient(4, 'pub');
-export const redisSub = makeClient(4, 'sub');
+export const redisSub = new Redis({ ...base, db: 0 });
+redisSub.on('connect', () => logger.info(`Redis[sub]: connected`));
+redisSub.on('error', (e: Error) => logger.error(`Redis[sub]: error`, { error: e.message }));
+
+// Export aliases pointing to the single shared client to maintain backward compatibility
+export const redisQueues    = redisMain;
+export const redisSessions  = redisMain;
+export const redisPresence  = redisMain;
+export const redisRateLimit = redisMain;
+export const redisAnalytics = redisMain;
 
 export async function connectRedis(): Promise<void> {
   await Promise.all([
-    redisQueues.connect(),
-    redisSessions.connect(),
-    redisPresence.connect(),
-    redisRateLimit.connect(),
-    redisAnalytics.connect(),
+    redisMain.connect(),
     redisPub.connect(),
     redisSub.connect(),
   ]);
@@ -52,11 +49,7 @@ export async function connectRedis(): Promise<void> {
 
 export async function disconnectRedis(): Promise<void> {
   await Promise.all([
-    redisQueues.quit(),
-    redisSessions.quit(),
-    redisPresence.quit(),
-    redisRateLimit.quit(),
-    redisAnalytics.quit(),
+    redisMain.quit(),
     redisPub.quit(),
     redisSub.quit(),
   ]);
@@ -66,7 +59,7 @@ export async function disconnectRedis(): Promise<void> {
 export async function getRedisHealth(): Promise<{ status: string; latencyMs?: number }> {
   try {
     const start = Date.now();
-    await redisSessions.ping();
+    await redisMain.ping();
     return { status: 'healthy', latencyMs: Date.now() - start };
   } catch {
     return { status: 'unhealthy' };
