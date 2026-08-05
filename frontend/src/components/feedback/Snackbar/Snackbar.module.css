@@ -1,0 +1,56 @@
+.snackbar {
+  position: fixed;
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-snackbar);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  animation: fadeInUp var(--duration-normal) var(--ease-out);
+  max-width: calc(100vw - var(--space-8));
+}
+
+.snackbar.exiting {
+  animation: fadeOut var(--duration-fast) var(--ease-in) forwards;
+}
+
+.icon {
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+.message {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.action {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+  border: none;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.action:hover {
+  background: var(--accent-subtle);
+}
+
+/* Variant colors */
+.success .icon { color: var(--success); }
+.warning .icon { color: var(--warning); }
+.error .icon { color: var(--danger); }
+.info .icon { color: var(--info); }

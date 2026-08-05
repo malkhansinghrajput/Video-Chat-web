@@ -1,0 +1,19 @@
+/* ===================================
+   GLOBAL STYLES — Entry point
+   Import order matters!
+   =================================== */
+
+/* 1. Design tokens (CSS custom properties) */
+@import './tokens.css';
+
+/* 2. CSS Reset */
+@import './reset.css';
+
+/* 3. Typography (includes font imports) */
+@import './typography.css';
+
+/* 4. Shared animations */
+@import './animations.css';
+
+/* 5. Utility classes */
+@import './utilities.css';

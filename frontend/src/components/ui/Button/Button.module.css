@@ -1,0 +1,147 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: var(--font-primary);
+  font-size: var(--text-button);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out);
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.button:active {
+  transform: scale(0.97);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ─── Sizes ─── */
+.sm {
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+}
+
+.md {
+  height: 44px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-md);
+}
+
+.lg {
+  height: 52px;
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-lg);
+  font-size: 1rem;
+}
+
+.xl {
+  height: 60px;
+  padding: 0 var(--space-10);
+  border-radius: var(--radius-lg);
+  font-size: 1.0625rem;
+}
+
+/* ─── Variants ─── */
+.primary {
+  background: var(--gradient-accent);
+  color: white;
+  box-shadow: var(--shadow-md), 0 0 20px var(--accent-glow);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--gradient-accent-hover);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
+.primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.secondary {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
+.danger {
+  background: var(--danger);
+  color: white;
+}
+
+.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, black);
+}
+
+.outline {
+  background: transparent;
+  color: var(--accent);
+  border: 1.5px solid var(--border-accent);
+}
+
+.outline:hover:not(:disabled) {
+  background: var(--accent-subtle);
+}
+
+/* ─── Glow animation for CTA ─── */
+.glow {
+  animation: breathing-glow 2s ease-in-out infinite;
+}
+
+/* ─── Full width ─── */
+.fullWidth {
+  width: 100%;
+}
+
+/* ─── Loading state ─── */
+.loading {
+  color: transparent;
+  pointer-events: none;
+}
+
+.spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* ─── Icon positioning ─── */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
