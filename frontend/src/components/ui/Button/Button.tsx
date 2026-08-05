@@ -1,8 +1,9 @@
 import { type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { motion, type HTMLMotionProps } from 'framer-motion';
 import { cn } from '@/utils/classNames';
 import styles from './Button.module.css';
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends Omit<HTMLMotionProps<"button">, "className" | "size"> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
   size?: 'sm' | 'md' | 'lg' | 'xl';
   icon?: ReactNode;
@@ -10,6 +11,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   loading?: boolean;
   glow?: boolean;
   fullWidth?: boolean;
+  className?: string;
 }
 
 export function Button({
@@ -26,7 +28,10 @@ export function Button({
   ...props
 }: ButtonProps) {
   return (
-    <button
+    <motion.button
+      whileHover={{ scale: disabled || loading ? 1 : 1.02 }}
+      whileTap={{ scale: disabled || loading ? 1 : 0.95 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
       className={cn(
         styles.button,
         styles[variant],
@@ -47,7 +52,7 @@ export function Button({
           <LoadingDots />
         </span>
       )}
-    </button>
+    </motion.button>
   );
 }
 

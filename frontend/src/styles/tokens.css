@@ -150,17 +150,17 @@
   --border-strong: rgba(255, 255, 255, 0.15);
   --border-accent: rgba(108, 92, 231, 0.4);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 24px var(--accent-glow);
-  --shadow-glow-lg: 0 0 48px var(--accent-glow);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  /* ─── Shadows ─── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 32px var(--accent-glow);
+  --shadow-glow-lg: 0 0 64px var(--accent-glow);
+  --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.4);
 
   /* Glassmorphism */
-  --glass-blur: blur(20px) saturate(180%);
+  --glass-blur: blur(24px) saturate(180%);
   --glass-bg: var(--bg-glass);
   --glass-border: var(--border);
 }
@@ -212,17 +212,17 @@
   --border-strong: rgba(0, 0, 0, 0.15);
   --border-accent: rgba(91, 76, 196, 0.3);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.15);
-  --shadow-glow: 0 0 24px var(--accent-glow);
-  --shadow-glow-lg: 0 0 48px var(--accent-glow);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* ─── Shadows ─── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.16);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.2);
+  --shadow-glow: 0 0 32px var(--accent-glow);
+  --shadow-glow-lg: 0 0 64px var(--accent-glow);
+  --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.06);
 
   /* Glassmorphism */
-  --glass-blur: blur(20px) saturate(150%);
+  --glass-blur: blur(24px) saturate(150%);
   --glass-bg: var(--bg-glass);
   --glass-border: var(--border);
 }

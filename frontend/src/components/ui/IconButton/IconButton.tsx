@@ -1,8 +1,9 @@
 import { type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { motion, type HTMLMotionProps } from 'framer-motion';
 import { cn } from '@/utils/classNames';
 import styles from './IconButton.module.css';
 
-export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface IconButtonProps extends Omit<HTMLMotionProps<"button">, "className" | "size"> {
   icon: ReactNode;
   size?: 'sm' | 'md' | 'lg';
   variant?: 'glass' | 'ghost' | 'filled' | 'danger';
@@ -10,6 +11,7 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   muted?: boolean;
   tooltip?: string;
   badge?: number;
+  className?: string;
 }
 
 export function IconButton({
@@ -21,10 +23,14 @@ export function IconButton({
   tooltip,
   badge,
   className,
+  disabled,
   ...props
 }: IconButtonProps) {
   const button = (
-    <button
+    <motion.button
+      whileHover={{ scale: disabled ? 1 : 1.05 }}
+      whileTap={{ scale: disabled ? 1 : 0.9 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
       className={cn(
         styles.iconButton,
         styles[size],
@@ -34,6 +40,7 @@ export function IconButton({
         className
       )}
       aria-label={tooltip}
+      disabled={disabled}
       {...props}
     >
       {icon}
@@ -42,7 +49,7 @@ export function IconButton({
           <Badge count={badge} />
         </span>
       )}
-    </button>
+    </motion.button>
   );
 
   if (tooltip) {

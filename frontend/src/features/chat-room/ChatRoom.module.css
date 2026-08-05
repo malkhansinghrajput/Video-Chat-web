@@ -1,0 +1,147 @@
+.container {
+  height: 100dvh;
+  width: 100%;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ─── Searching State ─── */
+.searchOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  z-index: 10;
+}
+
+.radar {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-8);
+}
+
+.avatarPlaceholder {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  z-index: 2;
+  box-shadow: var(--shadow-lg);
+}
+
+.ripple {
+  position: absolute;
+  inset: -50%;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  opacity: 0;
+}
+
+.searchText {
+  font-size: var(--text-h4);
+  font-weight: var(--weight-medium);
+  margin-bottom: var(--space-2);
+}
+
+.waitText {
+  color: var(--text-muted);
+  font-size: var(--text-body-sm);
+}
+
+/* ─── Network HUD ─── */
+.networkHud {
+  position: absolute;
+  top: var(--space-6);
+  left: var(--space-6);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.good { background: var(--success); box-shadow: 0 0 8px var(--success); }
+.fair { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
+.poor { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+/* ─── Controls Bar ─── */
+.controlsWrapper {
+  position: absolute;
+  bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xl);
+}
+
+/* ─── Remote Video Layout ─── */
+.remoteVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.localVideo {
+  position: absolute;
+  bottom: calc(120px + env(safe-area-inset-bottom));
+  right: var(--space-6);
+  width: 140px;
+  height: 200px;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-xl);
+  border: 2px solid var(--border-strong);
+  z-index: 25;
+}
+
+@media (max-width: 768px) {
+  .controlsWrapper {
+    width: 90%;
+    justify-content: space-between;
+    bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  }
+  
+  .localVideo {
+    bottom: calc(100px + env(safe-area-inset-bottom));
+    width: 100px;
+    height: 150px;
+  }
+}

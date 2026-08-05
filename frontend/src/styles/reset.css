@@ -53,6 +53,41 @@ select {
   color: inherit;
 }
 
+/* ─── Premium Accessibility Focus States ─── */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px var(--accent-subtle);
+  border-radius: inherit;
+  transition: outline-offset var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+/* Specific component focus overrides */
+input:focus-visible, 
+textarea:focus-visible {
+  outline-offset: 0;
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+   scroll-behavior: auto;
+  }
+  
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 button {
   cursor: pointer;
   border: none;
@@ -84,12 +119,6 @@ h6 {
   outline: none;
 }
 
-/* Custom visible focus for keyboard users */
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
 
 /* Disable touch callout and selection on interactive elements */
 button,
