@@ -3,7 +3,7 @@
  * Base URL is proxied via Vite in dev, same-origin in prod
  */
 
-const BASE = '/api/v1';
+const BASE = import.meta.env.VITE_API_URL ?? '/api/v1';
 
 function getToken(): string | null {
   return sessionStorage.getItem('vc_token');
