@@ -93,4 +93,26 @@ export function handleSignalingEvents(socket: Socket, _io: Server): void {
       logError('Signaling: ICE candidate error', err);
     }
   });
+
+  // ── webrtc:restart ───────────────────────
+  // Relays an ICE restart request to the peer.
+  // The WEBRTC_RESTART event is already defined in SocketEvents constants
+  // but was never handled — this activates ICE restart recovery.
+  socket.on(SocketEvents.WEBRTC_RESTART, async (payload: { roomId: string }) => {
+    try {
+      if (!payload?.roomId) return;
+
+      const isMember = await roomService.isRoomMember(payload.roomId, data.sessionId);
+      if (!isMember) return;
+
+      const peerSocketId = await roomService.getPeerSocketId(payload.roomId, data.sessionId);
+      if (!peerSocketId) return;
+
+      socket.to(peerSocketId).emit(SocketEvents.WEBRTC_RESTART, { roomId: payload.roomId });
+      logger.debug('Signaling: ICE restart relayed', { roomId: payload.roomId });
+    } catch (err) {
+      logError('Signaling: restart error', err);
+    }
+  });
 }
+

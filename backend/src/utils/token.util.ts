@@ -41,8 +41,15 @@ export function verifySessionToken(token: string): string | null {
       .update(payload)
       .digest('hex');
 
+    // Guard: sig must be same byte length as expectedSig before timingSafeEqual
+    // An invalid/truncated sig would cause timingSafeEqual to throw — silently swallowed before
+    if (!sig || sig.length !== expectedSig.length) return null;
+
+    const sigBuf      = Buffer.from(sig, 'hex');
+    const expectedBuf = Buffer.from(expectedSig, 'hex');
+
     // Constant-time comparison to prevent timing attacks
-    if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
+    if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) {
       return null;
     }
 

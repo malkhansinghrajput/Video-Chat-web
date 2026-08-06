@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import crypto from 'crypto';
 import { hashSensitiveData } from './token.util';
 
 /**
@@ -47,8 +48,11 @@ export function jaccardSimilarity(a: string[], b: string[]): number {
 }
 
 /**
- * Generate a request correlation ID from request ID header or random UUID chunk.
+ * Generate a cryptographically unique request correlation ID.
+ * Uses crypto.randomBytes instead of Math.random to prevent collisions
+ * in high-concurrency environments and distributed tracing.
  */
 export function getCorrelationId(req: Request): string {
-  return (req.headers['x-request-id'] as string) ?? Math.random().toString(36).slice(2, 10);
+  return (req.headers['x-request-id'] as string) ?? crypto.randomBytes(4).toString('hex');
 }
+

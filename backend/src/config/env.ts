@@ -102,4 +102,19 @@ export const env = {
   // Metrics
   METRICS_ENABLED: optionalBool('METRICS_ENABLED', true),
   METRICS_PORT: optionalInt('METRICS_PORT', 9101),
+
+  // Matching Engine — Adaptive polling
+  MATCH_POLL_IDLE_MS: optionalInt('MATCH_POLL_IDLE_MS', 500),       // slow-poll when queue < 2
+
+  // Queue abuse protection
+  NEXT_COOLDOWN_MS: optionalInt('NEXT_COOLDOWN_MS', 2000),           // min delay between skips
+
+  // Redis Pub/Sub retry
+  PUBSUB_RETRY_INTERVAL_MS: optionalInt('PUBSUB_RETRY_INTERVAL_MS', 5000),
+
+  // Heartbeat miss detection
+  HEARTBEAT_MISS_THRESHOLD: optionalInt('HEARTBEAT_MISS_THRESHOLD', 3),
+
+  // Regional routing (future multi-region, no behavior change now)
+  REGION: optional('REGION', 'default'),
 } as const;

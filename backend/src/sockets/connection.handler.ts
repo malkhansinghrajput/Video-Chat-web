@@ -3,7 +3,7 @@ import { sessionService } from '../services/session.service';
 import { queueService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
 import { SocketEvents, RedisKeys, ErrorCodes, Limits } from '../constants';
-import { redisPresence, redisRateLimit, redisSub } from '../config/redis';
+import { redisPresence, redisRateLimit, subscribeToChannel } from '../config/redis';
 import { env } from '../config/env';
 import type { SocketData } from '../types';
 import { handleQueueEvents } from './queue.handler';
@@ -17,7 +17,7 @@ import { handleReportEvents } from './report.handler';
 // ─────────────────────────────────────────────
 
 export function registerConnectionHandlers(io: Server): void {
-  // Subscribe to Redis Pub/Sub match events and relay to clients
+  // Subscribe to Redis Pub/Sub match events with automatic retry on failure (e.g. OOM)
   setupMatchEventRelay(io);
 
   io.on('connection', async (socket: Socket) => {
@@ -39,6 +39,19 @@ export function registerConnectionHandlers(io: Server): void {
 
       // Join personal room for direct messages
       await socket.join(`session:${sessionId}`);
+
+      // ── Reconnect recovery: restore active room if session was in one ──
+      // This allows calls to survive brief internet drops
+      try {
+        const session = await sessionService.getSession(sessionId);
+        if (session?.roomId && (session.status === 'matched' || session.status === 'connected')) {
+          await socket.join(`room:${session.roomId}`);
+          logger.info('Socket: reconnected to active room', {
+            sessionId,
+            roomId: session.roomId,
+          });
+        }
+      } catch { /* reconnect recovery is best-effort */ }
 
       // Register all event handlers
       handleQueueEvents(socket, io);
@@ -65,6 +78,7 @@ export function registerConnectionHandlers(io: Server): void {
 
 // ─────────────────────────────────────────────
 // Heartbeat Handler
+// Tracks last heartbeat timestamp for miss detection
 // ─────────────────────────────────────────────
 
 function handleHeartbeat(socket: Socket): void {
@@ -72,14 +86,24 @@ function handleHeartbeat(socket: Socket): void {
 
   socket.on(SocketEvents.HEARTBEAT, async () => {
     try {
+      const now = Date.now();
+
       // Refresh presence TTL
       await redisPresence.setex(
         RedisKeys.presence.socket(socket.id),
         Math.ceil(Limits.HEARTBEAT_INTERVAL_MS / 1000) * 3,
         'online',
       );
+
+      // Track last heartbeat timestamp for miss detection
+      await redisPresence.setex(
+        RedisKeys.presence.heartbeat(data.sessionId),
+        Math.ceil((Limits.HEARTBEAT_INTERVAL_MS * env.HEARTBEAT_MISS_THRESHOLD) / 1000) + 30,
+        String(now),
+      );
+
       await sessionService.refreshSession(data.sessionId);
-      socket.emit(SocketEvents.HEARTBEAT_ACK, { timestamp: Date.now() });
+      socket.emit(SocketEvents.HEARTBEAT_ACK, { timestamp: now });
     } catch (err) {
       logError('Socket: heartbeat error', err);
     }
@@ -134,55 +158,52 @@ async function handleDisconnect(socket: Socket, io: Server, reason: string): Pro
 
 // ─────────────────────────────────────────────
 // Match Event Relay (Redis Pub/Sub → Socket.IO)
-// Bridges the matching engine to this signaling node
+// Uses subscribeToChannel for automatic retry on OOM/failure
 // ─────────────────────────────────────────────
 
 function setupMatchEventRelay(io: Server): void {
-  redisSub.subscribe('match:events', (err) => {
-    if (err) {
-      logError('Socket: failed to subscribe to match:events', err);
-    } else {
-      logger.info('Socket: subscribed to Redis match:events');
-    }
-  });
+  subscribeToChannel(
+    'match:events',
+    env.PUBSUB_RETRY_INTERVAL_MS,
+    (message) => {
+      try {
+        const event = JSON.parse(message) as {
+          type: string;
+          roomId: string;
+          turnCredentials: object;
+          initiator: { sessionId: string; socketId: string; country: string };
+          responder: { sessionId: string; socketId: string; country: string };
+          matchedAt: number;
+        };
 
-  redisSub.on('message', (_channel: string, message: string) => {
-    try {
-      const event = JSON.parse(message) as {
-        type: string;
-        roomId: string;
-        turnCredentials: object;
-        initiator: { sessionId: string; socketId: string; country: string };
-        responder: { sessionId: string; socketId: string; country: string };
-        matchedAt: number;
-      };
+        if (event.type !== 'match_found') return;
 
-      if (event.type !== 'match_found') return;
+        const { initiator, responder, roomId, turnCredentials } = event;
 
-      const { initiator, responder, roomId, turnCredentials } = event;
+        // Deliver match:found to both peers
+        io.to(`session:${initiator.sessionId}`).emit(SocketEvents.MATCH_FOUND, {
+          roomId,
+          role: 'initiator',
+          turnCredentials,
+          peerCountry: responder.country,
+        });
 
-      // Deliver match:found to both peers
-      io.to(`session:${initiator.sessionId}`).emit(SocketEvents.MATCH_FOUND, {
-        roomId,
-        role: 'initiator',
-        turnCredentials,
-        peerCountry: responder.country,
-      });
+        io.to(`session:${responder.sessionId}`).emit(SocketEvents.MATCH_FOUND, {
+          roomId,
+          role: 'responder',
+          turnCredentials,
+          peerCountry: initiator.country,
+        });
 
-      io.to(`session:${responder.sessionId}`).emit(SocketEvents.MATCH_FOUND, {
-        roomId,
-        role: 'responder',
-        turnCredentials,
-        peerCountry: initiator.country,
-      });
+        // Join both sockets to room for signaling
+        io.in(`session:${initiator.sessionId}`).socketsJoin(`room:${roomId}`);
+        io.in(`session:${responder.sessionId}`).socketsJoin(`room:${roomId}`);
 
-      // Join both sockets to room for signaling
-      io.in(`session:${initiator.sessionId}`).socketsJoin(`room:${roomId}`);
-      io.in(`session:${responder.sessionId}`).socketsJoin(`room:${roomId}`);
-
-      logger.debug('Socket: match event relayed', { roomId });
-    } catch (err) {
-      logError('Socket: failed to relay match event', err);
-    }
-  });
+        logger.debug('Socket: match event relayed', { roomId });
+      } catch (err) {
+        logError('Socket: failed to relay match event', err);
+      }
+    },
+  );
 }
+

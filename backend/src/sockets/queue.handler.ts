@@ -1,9 +1,9 @@
 import type { Server, Socket } from 'socket.io';
 import { sessionService } from '../services/session.service';
-import { queueService } from '../services/matching.service';
+import { queueService, roomService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
 import { SocketEvents, RedisKeys, ErrorCodes, Limits } from '../constants';
-import { redisRateLimit } from '../config/redis';
+import { redisRateLimit, redisAnalytics } from '../config/redis';
 import { env } from '../config/env';
 import type { SocketData, QueueEntry, JoinQueuePayload } from '../types';
 
@@ -89,7 +89,7 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
   // ── chat:next ────────────────────────────
   socket.on(SocketEvents.CHAT_NEXT, async () => {
     try {
-      // Rate limit: max 10 next per 60s
+      // Rate limit: max N next per window (existing check)
       const limitKey = RedisKeys.rateLimit.next(data.sessionId);
       const count = await redisRateLimit.incr(limitKey);
       if (count === 1) await redisRateLimit.expire(limitKey, env.RATE_LIMIT_NEXT_WINDOW_SECONDS);
@@ -98,6 +98,15 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         return;
       }
 
+      // Skip cooldown: prevent button spam (configurable, default 2s)
+      const cooldownKey = `cooldown:next:${data.sessionId}`;
+      const onCooldown = await redisRateLimit.exists(cooldownKey);
+      if (onCooldown) {
+        // Silently ignore during cooldown — don't error the user
+        return;
+      }
+      await redisRateLimit.setex(cooldownKey, Math.ceil(env.NEXT_COOLDOWN_MS / 1000), '1');
+
       // Get session, tear down current room if any
       const session = await sessionService.getSession(data.sessionId);
       if (session?.roomId) {
@@ -105,7 +114,15 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         if (session.peerSocketId) {
           socket.to(session.peerSocketId).emit(SocketEvents.PEER_NEXT, { reason: 'partner_skipped' });
         }
-        // Leave room
+        // ── Immediate room cleanup (prevents ghost rooms) ──────────────
+        try {
+          await roomService.closeRoom(session.roomId);
+        } catch { /* room cleanup is best-effort */ }
+
+        // Decrement active rooms counter
+        try { await redisAnalytics.decr(RedisKeys.analytics.activeRooms()); } catch { /* non-fatal */ }
+
+        // Leave socket.io room
         socket.leave(`room:${session.roomId}`);
         await sessionService.updateSession(data.sessionId, {
           status: 'idle',
@@ -114,6 +131,9 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
           peerSocketId: undefined,
         } as never);
       }
+
+      // Track skip count for analytics
+      try { await redisAnalytics.incr(RedisKeys.analytics.skipCount()); } catch { /* non-fatal */ }
 
       // Re-enter queue with priority boost
       const freshSession = await sessionService.getSession(data.sessionId);
@@ -147,6 +167,14 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         socket.to(session.peerSocketId).emit(SocketEvents.PEER_LEFT, { reason: 'partner_left' });
       }
       if (session?.roomId) {
+        // ── Immediate room cleanup (prevents ghost rooms) ──────────────
+        try {
+          await roomService.closeRoom(session.roomId);
+        } catch { /* room cleanup is best-effort */ }
+
+        // Decrement active rooms counter
+        try { await redisAnalytics.decr(RedisKeys.analytics.activeRooms()); } catch { /* non-fatal */ }
+
         socket.leave(`room:${session.roomId}`);
       }
       await queueService.dequeue(data.sessionId, socket.id);
@@ -163,3 +191,4 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
     }
   });
 }
+

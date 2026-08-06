@@ -5,6 +5,25 @@ import { hashSensitiveData } from '../utils/token.util';
 import { env } from '../config/env';
 import { ErrorCodes } from '../constants';
 
+// ─────────────────────────────────────────────
+// Atomic rate limit increment via Lua script
+// Combines INCR + EXPIRE into a single round-trip,
+// eliminating the race condition where Redis restarts
+// between the two separate calls.
+// ─────────────────────────────────────────────
+const RATE_LIMIT_LUA = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+`;
+
+async function atomicRateLimit(key: string, windowSeconds: number): Promise<number> {
+  const result = await redisRateLimit.eval(RATE_LIMIT_LUA, 1, key, String(windowSeconds));
+  return typeof result === 'number' ? result : parseInt(String(result), 10);
+}
+
 /**
  * General API rate limiter using Redis sliding window.
  * Limits by IP hash.
@@ -14,8 +33,7 @@ export async function apiRateLimiter(req: Request, res: Response, next: NextFunc
   const ipHash = hashSensitiveData(ip);
   const key = `ratelimit:api:${ipHash}`;
 
-  const count = await redisRateLimit.incr(key);
-  if (count === 1) await redisRateLimit.expire(key, env.RATE_LIMIT_API_WINDOW_SECONDS);
+  const count = await atomicRateLimit(key, env.RATE_LIMIT_API_WINDOW_SECONDS);
 
   const remaining = Math.max(0, env.RATE_LIMIT_API_MAX - count);
   res.setHeader('X-RateLimit-Limit', String(env.RATE_LIMIT_API_MAX));
@@ -42,10 +60,7 @@ export async function sessionInitRateLimiter(req: Request, res: Response, next: 
   const ipHash = hashSensitiveData(ip);
   const key = `ratelimit:init:${ipHash}`;
 
-  const count = await redisRateLimit.incr(key);
-  if (count === 1) {
-    await redisRateLimit.expire(key, env.RATE_LIMIT_SESSION_INIT_WINDOW_HOURS * 3600);
-  }
+  const count = await atomicRateLimit(key, env.RATE_LIMIT_SESSION_INIT_WINDOW_HOURS * 3600);
 
   if (count > env.RATE_LIMIT_SESSION_INIT_MAX) {
     res.status(429).json({
@@ -58,3 +73,4 @@ export async function sessionInitRateLimiter(req: Request, res: Response, next: 
 
   next();
 }
+

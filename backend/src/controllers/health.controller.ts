@@ -9,6 +9,15 @@ import { RedisKeys } from '../constants';
 // Health & Analytics Controllers
 // ─────────────────────────────────────────────
 
+/** Safe Redis get — returns '0' if Redis OOM or unavailable */
+async function safeRedisGet(key: string): Promise<string> {
+  try {
+    return (await redisAnalytics.get(key)) ?? '0';
+  } catch {
+    return '0';
+  }
+}
+
 export class HealthController {
   /**
    * GET /health
@@ -58,13 +67,28 @@ export class HealthController {
     const [dbHealth, redisHealth, queueDepth] = await Promise.all([
       Promise.resolve(getDatabaseHealth()),
       getRedisHealth(),
-      queueService.getQueueDepth(),
+      queueService.getQueueDepth().catch(() => 0),
     ]);
 
-    const concurrentUsers = parseInt(
-      (await redisAnalytics.get(RedisKeys.analytics.concurrentUsers())) ?? '0',
-      10,
-    );
+    const [
+      concurrentUsers,
+      matchCount,
+      skipCount,
+      activeRooms,
+      avgQueueWaitRaw,
+    ] = await Promise.all([
+      safeRedisGet(RedisKeys.analytics.concurrentUsers()),
+      safeRedisGet(RedisKeys.analytics.matchCount()),
+      safeRedisGet(RedisKeys.analytics.skipCount()),
+      safeRedisGet(RedisKeys.analytics.activeRooms()),
+      safeRedisGet(RedisKeys.analytics.avgQueueWait()),
+    ]);
+
+    const matchCountNum = parseInt(matchCount, 10);
+    const skipCountNum  = parseInt(skipCount, 10);
+    const skipRate      = matchCountNum > 0
+      ? Math.round((skipCountNum / matchCountNum) * 100)
+      : 0;
 
     const isMatchingEngineHealthy = matchingEngine.isHealthy;
     const allHealthy = dbHealth.status === 'connected' && redisHealth.status === 'healthy' && isMatchingEngineHealthy;
@@ -74,15 +98,21 @@ export class HealthController {
       service: 'video-chat-backend',
       version: process.env['npm_package_version'] ?? '1.0.0',
       uptime: process.uptime(),
+      region: process.env['REGION'] ?? 'default',
       timestamp: Date.now(),
       checks: {
         mongodb: dbHealth,
-        redis: redisHealth,
+        redis: { ...redisHealth },
         matchingEngine: isMatchingEngineHealthy ? 'running' : 'stopped',
       },
       stats: {
-        concurrentUsers,
+        concurrentUsers: parseInt(concurrentUsers, 10),
         queueDepth,
+        activeRooms: parseInt(activeRooms, 10),
+        matchCount: matchCountNum,
+        skipCount: skipCountNum,
+        skipRate: `${skipRate}%`,
+        avgQueueWaitMs: parseInt(avgQueueWaitRaw, 10),
         memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
         cpuUsage: process.cpuUsage(),
       },
@@ -95,22 +125,45 @@ export class AnalyticsController {
    * GET /api/v1/analytics/live
    */
   async getLiveStats(_req: Request, res: Response): Promise<void> {
-    const [concurrentUsersRaw, queueDepth] = await Promise.all([
-      redisAnalytics.get(RedisKeys.analytics.concurrentUsers()),
-      queueService.getQueueDepth(),
+    const [
+      concurrentUsersRaw,
+      queueDepth,
+      matchCountRaw,
+      skipCountRaw,
+      activeRoomsRaw,
+      avgQueueWaitRaw,
+    ] = await Promise.all([
+      safeRedisGet(RedisKeys.analytics.concurrentUsers()),
+      queueService.getQueueDepth().catch(() => 0),
+      safeRedisGet(RedisKeys.analytics.matchCount()),
+      safeRedisGet(RedisKeys.analytics.skipCount()),
+      safeRedisGet(RedisKeys.analytics.activeRooms()),
+      safeRedisGet(RedisKeys.analytics.avgQueueWait()),
     ]);
+
+    const matchCount = parseInt(matchCountRaw, 10);
+    const skipCount  = parseInt(skipCountRaw, 10);
+    const skipRate   = matchCount > 0
+      ? Math.round((skipCount / matchCount) * 100)
+      : 0;
 
     res.json({
       success: true,
       data: {
-        concurrentUsers: parseInt(concurrentUsersRaw ?? '0', 10),
-        usersInQueue: queueDepth,
-        timestamp: Date.now(),
+        concurrentUsers:  parseInt(concurrentUsersRaw, 10),
+        usersInQueue:     queueDepth,
+        activeRooms:      parseInt(activeRoomsRaw, 10),
+        matchCount,
+        skipCount,
+        skipRate:         `${skipRate}%`,
+        avgQueueWaitMs:   parseInt(avgQueueWaitRaw, 10),
+        timestamp:        Date.now(),
       },
       timestamp: Date.now(),
     });
   }
 }
 
-export const healthController = new HealthController();
+export const healthController  = new HealthController();
 export const analyticsController = new AnalyticsController();
+

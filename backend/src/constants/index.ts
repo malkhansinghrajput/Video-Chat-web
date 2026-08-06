@@ -72,7 +72,12 @@ export const RedisKeys = {
   },
   analytics: {
     concurrentUsers: () => 'stats:concurrent_users',
-    queueDepth: () => 'stats:queue_depth',
+    queueDepth:      () => 'stats:queue_depth',
+    matchCount:      () => 'stats:match_count',
+    skipCount:       () => 'stats:skip_count',
+    activeRooms:     () => 'stats:active_rooms',
+    turnUsage:       () => 'stats:turn_usage',
+    avgQueueWait:    () => 'stats:avg_queue_wait_ms',
   },
   nonce: (n: string) => `nonce:${n}`,
   ban: (hash: string) => `ban:${hash}`,
