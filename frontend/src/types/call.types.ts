@@ -5,6 +5,7 @@ export type CallStatus =
   | 'permission_pending'
   | 'permission_denied'
   | 'searching'
+  | 'matched'
   | 'connecting'
   | 'connected'
   | 'disconnected'
@@ -13,7 +14,7 @@ export type CallStatus =
 
 export type ConnectionQuality = 'excellent' | 'good' | 'poor' | 'critical';
 
-export type PartnerStatus = 'connected' | 'camera_off' | 'reconnecting' | null;
+export type PartnerStatus = 'connected' | 'camera_off' | 'reconnecting' | 'left' | null;
 
 export interface ConnectionStats {
   rtt: number;

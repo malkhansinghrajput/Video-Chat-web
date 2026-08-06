@@ -1,6 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
 import { motion, AnimatePresence, useAnimation } from 'framer-motion';
-import { cn } from '@/utils/classNames';
 import styles from './BottomSheet.module.css';
 
 export interface BottomSheetProps {
@@ -33,7 +32,7 @@ export function BottomSheet({
     };
   }, [isOpen, onClose]);
 
-  const handleDragEnd = (e: any, info: any) => {
+  const handleDragEnd = (_e: any, info: any) => {
     // Close if dragged down far enough or fast enough
     if (info.offset.y > 100 || info.velocity.y > 500) {
       onClose();

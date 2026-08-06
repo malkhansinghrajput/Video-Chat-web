@@ -5,7 +5,6 @@ export function formatRelativeTime(timestamp: number): string {
   const diff = now - timestamp;
   const seconds = Math.floor(diff / 1000);
   const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
 
   if (seconds < 10) return 'just now';
   if (seconds < 60) return `${seconds}s ago`;

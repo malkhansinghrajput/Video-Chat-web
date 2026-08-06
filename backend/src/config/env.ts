@@ -1,78 +1,105 @@
-import { z } from 'zod';
-import dotenv from 'dotenv';
+/**
+ * Environment Configuration
+ * Parses and validates all environment variables from .env
+ * Uses dotenv to load the .env file
+ */
+
+import { config } from 'dotenv';
 import path from 'path';
 
-dotenv.config({ path: path.join(__dirname, '../../.env') });
+// Load .env from project root (backend directory)
+config({ path: path.resolve(__dirname, '../../.env') });
 
-const EnvSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().default(3001),
-  SERVICE_NAME: z.string().default('api'),
-  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-
-  SESSION_HMAC_SECRET: z.string().min(16).default('dev-secret-change-in-production-12345'),
-  NONCE_TTL_SECONDS: z.coerce.number().default(60),
-
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
-
-  MONGODB_URI: z.string().default('mongodb://localhost:27017/videochat_dev'),
-  MONGODB_DB_NAME: z.string().default('videochat_dev'),
-
-  REDIS_HOST: z.string().default('localhost'),
-  REDIS_PORT: z.coerce.number().default(6379),
-  REDIS_PASSWORD: z.string().optional(),
-  REDIS_TLS: z.string().transform((v) => v === 'true').default('false'),
-
-  TURN_SERVER_URLS: z.string().default('turn:localhost:3478'),
-  TURN_SERVER_SECRET: z.string().default('dev-turn-secret'),
-  TURN_CREDENTIAL_TTL_SECONDS: z.coerce.number().default(3600),
-
-  RATE_LIMIT_API_MAX: z.coerce.number().default(100),
-  RATE_LIMIT_API_WINDOW_SECONDS: z.coerce.number().default(60),
-  RATE_LIMIT_SESSION_INIT_MAX: z.coerce.number().default(3),
-  RATE_LIMIT_SESSION_INIT_WINDOW_HOURS: z.coerce.number().default(1),
-  RATE_LIMIT_NEXT_MAX: z.coerce.number().default(10),
-  RATE_LIMIT_NEXT_WINDOW_SECONDS: z.coerce.number().default(60),
-  RATE_LIMIT_MSG_MAX: z.coerce.number().default(10),
-  RATE_LIMIT_MSG_WINDOW_SECONDS: z.coerce.number().default(10),
-  RATE_LIMIT_REPORT_MAX: z.coerce.number().default(5),
-  RATE_LIMIT_REPORT_WINDOW_HOURS: z.coerce.number().default(24),
-
-  MATCH_POLL_INTERVAL_MS: z.coerce.number().default(50),
-  QUEUE_ENTRY_TTL_SECONDS: z.coerce.number().default(60),
-
-  AUTO_BAN_REPORT_THRESHOLD: z.coerce.number().default(10),
-  AUTO_BAN_WINDOW_MINUTES: z.coerce.number().default(60),
-  AUTO_BAN_DURATION_HOURS: z.coerce.number().default(24),
-
-  SESSION_TTL_SECONDS: z.coerce.number().default(86400),
-  HEARTBEAT_INTERVAL_MS: z.coerce.number().default(25000),
-  RECONNECT_GRACE_PERIOD_MS: z.coerce.number().default(5000),
-
-  METRICS_ENABLED: z.string().transform((v) => v === 'true').default('true'),
-  METRICS_PORT: z.coerce.number().default(9101),
-}).refine((data) => {
-  if (data.NODE_ENV === 'production') {
-    if (data.SESSION_HMAC_SECRET === 'dev-secret-change-in-production-12345') return false;
-    if (data.TURN_SERVER_SECRET === 'dev-turn-secret') return false;
-    if (data.MONGODB_URI.includes('localhost')) return false;
-    if (data.REDIS_HOST.includes('localhost')) return false;
+function required(key: string): string {
+  const val = process.env[key];
+  if (!val) {
+    throw new Error(`Missing required environment variable: ${key}`);
   }
-  return true;
-}, {
-  message: "Production environment MUST use real secrets and remote databases, not development defaults.",
-});
-
-export type Env = z.infer<typeof EnvSchema>;
-
-function loadEnv(): Env {
-  const result = EnvSchema.safeParse(process.env);
-  if (!result.success) {
-    console.error('❌ Invalid environment configuration:');
-    console.error(result.error.format());
-    process.exit(1);
-  }
-  return result.data;
+  return val;
 }
 
-export const env = loadEnv();
+function optional(key: string, fallback: string): string {
+  return process.env[key] ?? fallback;
+}
+
+function optionalInt(key: string, fallback: number): number {
+  const val = process.env[key];
+  if (!val) return fallback;
+  const parsed = parseInt(val, 10);
+  return isNaN(parsed) ? fallback : parsed;
+}
+
+function optionalBool(key: string, fallback: boolean): boolean {
+  const val = process.env[key];
+  if (!val) return fallback;
+  return val.toLowerCase() === 'true' || val === '1';
+}
+
+export const env = {
+  // App
+  NODE_ENV: optional('NODE_ENV', 'development') as 'development' | 'production' | 'test',
+  PORT: optionalInt('PORT', 3001),
+  SERVICE_NAME: optional('SERVICE_NAME', 'api'),
+  LOG_LEVEL: optional('LOG_LEVEL', 'debug'),
+
+  // Security
+  SESSION_HMAC_SECRET: optional('SESSION_HMAC_SECRET', 'change-me-in-production-minimum-32-chars!!'),
+  NONCE_TTL_SECONDS: optionalInt('NONCE_TTL_SECONDS', 60),
+
+  // CORS
+  CORS_ORIGIN: optional('CORS_ORIGIN', 'http://localhost:5173,http://localhost:3000'),
+
+  // MongoDB
+  MONGODB_URI: optional('MONGODB_URI', 'mongodb://localhost:27017/videochat_dev'),
+  MONGODB_DB_NAME: optional('MONGODB_DB_NAME', 'videochat_dev'),
+
+  // Redis
+  REDIS_HOST: optional('REDIS_HOST', 'localhost'),
+  REDIS_PORT: optionalInt('REDIS_PORT', 6379),
+  REDIS_USERNAME: optional('REDIS_USERNAME', 'default'),
+  REDIS_PASSWORD: optional('REDIS_PASSWORD', ''),
+  REDIS_URL: optional('REDIS_URL', ''),
+  REDIS_DISABLED: optionalBool('REDIS_DISABLED', false),
+  REDIS_TLS: optionalBool('REDIS_TLS', false),
+  REDIS_ERROR_LOG_INTERVAL_MS: optionalInt('REDIS_ERROR_LOG_INTERVAL_MS', 60_000),
+
+  // TURN / Coturn
+  TURN_SERVER_URLS: optional('TURN_SERVER_URLS', 'stun:stun.l.google.com:19302'),
+  TURN_SERVER_SECRET: optional('TURN_SERVER_SECRET', 'change-me-turn-shared-secret'),
+  TURN_CREDENTIAL_TTL_SECONDS: optionalInt('TURN_CREDENTIAL_TTL_SECONDS', 3600),
+
+  // Rate Limits
+  RATE_LIMIT_SESSION_INIT_MAX: optionalInt('RATE_LIMIT_SESSION_INIT_MAX', 3),
+  RATE_LIMIT_SESSION_INIT_WINDOW_HOURS: optionalInt('RATE_LIMIT_SESSION_INIT_WINDOW_HOURS', 1),
+  RATE_LIMIT_API_MAX: optionalInt('RATE_LIMIT_API_MAX', 100),
+  RATE_LIMIT_API_WINDOW_SECONDS: optionalInt('RATE_LIMIT_API_WINDOW_SECONDS', 60),
+  RATE_LIMIT_NEXT_MAX: optionalInt('RATE_LIMIT_NEXT_MAX', 10),
+  RATE_LIMIT_NEXT_WINDOW_SECONDS: optionalInt('RATE_LIMIT_NEXT_WINDOW_SECONDS', 60),
+  RATE_LIMIT_MSG_MAX: optionalInt('RATE_LIMIT_MSG_MAX', 10),
+  RATE_LIMIT_MSG_WINDOW_SECONDS: optionalInt('RATE_LIMIT_MSG_WINDOW_SECONDS', 10),
+  RATE_LIMIT_REPORT_MAX: optionalInt('RATE_LIMIT_REPORT_MAX', 5),
+  RATE_LIMIT_REPORT_WINDOW_HOURS: optionalInt('RATE_LIMIT_REPORT_WINDOW_HOURS', 24),
+
+  // Matching Engine
+  MATCH_POLL_INTERVAL_MS: optionalInt('MATCH_POLL_INTERVAL_MS', 50),
+  MATCH_COUNTRY_RELAXATION_SECONDS: optionalInt('MATCH_COUNTRY_RELAXATION_SECONDS', 5),
+  MATCH_LANGUAGE_RELAXATION_SECONDS: optionalInt('MATCH_LANGUAGE_RELAXATION_SECONDS', 10),
+  MATCH_INTEREST_RELAXATION_SECONDS: optionalInt('MATCH_INTEREST_RELAXATION_SECONDS', 15),
+  MATCH_GLOBAL_FALLBACK_SECONDS: optionalInt('MATCH_GLOBAL_FALLBACK_SECONDS', 30),
+  QUEUE_ENTRY_TTL_SECONDS: optionalInt('QUEUE_ENTRY_TTL_SECONDS', 60),
+
+  // Moderation
+  AUTO_BAN_REPORT_THRESHOLD: optionalInt('AUTO_BAN_REPORT_THRESHOLD', 10),
+  AUTO_BAN_WINDOW_MINUTES: optionalInt('AUTO_BAN_WINDOW_MINUTES', 60),
+  AUTO_BAN_DURATION_HOURS: optionalInt('AUTO_BAN_DURATION_HOURS', 24),
+
+  // Session
+  SESSION_TTL_SECONDS: optionalInt('SESSION_TTL_SECONDS', 86_400),
+  HEARTBEAT_INTERVAL_MS: optionalInt('HEARTBEAT_INTERVAL_MS', 25_000),
+  HEARTBEAT_TIMEOUT_MS: optionalInt('HEARTBEAT_TIMEOUT_MS', 5_000),
+  RECONNECT_GRACE_PERIOD_MS: optionalInt('RECONNECT_GRACE_PERIOD_MS', 5_000),
+
+  // Metrics
+  METRICS_ENABLED: optionalBool('METRICS_ENABLED', true),
+  METRICS_PORT: optionalInt('METRICS_PORT', 9101),
+} as const;

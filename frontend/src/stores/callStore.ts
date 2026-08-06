@@ -4,6 +4,17 @@ import { create } from 'zustand';
 import type { CallStatus, ConnectionQuality, PartnerStatus } from '@/types/call.types';
 import type { Message } from '@/types/chat.types';
 
+export interface MatchInfo {
+  roomId: string;
+  role: 'initiator' | 'responder';
+  turnCredentials: {
+    urls: string | string[];
+    username: string;
+    credential: string;
+  };
+  peerCountry: string;
+}
+
 interface CallState {
   /* Core State */
   status: CallStatus;
@@ -47,6 +58,10 @@ interface CallState {
   markRead: () => void;
   setPartnerTyping: (typing: boolean) => void;
   clearMessages: () => void;
+
+  /* Match Info (from match:found event) */
+  matchInfo: MatchInfo | null;
+  setMatchInfo: (info: MatchInfo | null) => void;
 
   /* Full Reset */
   resetCall: () => void;
@@ -115,8 +130,11 @@ export const useCallStore = create<CallState>((set, get) => ({
     });
   },
   markRead: () => set({ unreadCount: 0 }),
-  setPartnerTyping: (typing) => set({ isPartnerTyping: typing }),
+  setPartnerTyping: (typing: boolean) => set({ isPartnerTyping: typing }),
   clearMessages: () => set({ messages: [], unreadCount: 0, isPartnerTyping: false }),
+
+  matchInfo: null,
+  setMatchInfo: (info) => set({ matchInfo: info }),
 
   resetCall: () =>
     set({
@@ -134,5 +152,6 @@ export const useCallStore = create<CallState>((set, get) => ({
       messages: [],
       unreadCount: 0,
       isPartnerTyping: false,
+      matchInfo: null,
     }),
 }));

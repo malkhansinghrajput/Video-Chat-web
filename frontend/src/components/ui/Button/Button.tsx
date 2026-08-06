@@ -1,9 +1,9 @@
-import { type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { motion, type HTMLMotionProps } from 'framer-motion';
 import { cn } from '@/utils/classNames';
 import styles from './Button.module.css';
 
-export interface ButtonProps extends Omit<HTMLMotionProps<"button">, "className" | "size"> {
+export interface ButtonProps extends Omit<HTMLMotionProps<"button">, "className" | "size" | "children"> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
   size?: 'sm' | 'md' | 'lg' | 'xl';
   icon?: ReactNode;
@@ -11,6 +11,7 @@ export interface ButtonProps extends Omit<HTMLMotionProps<"button">, "className"
   loading?: boolean;
   glow?: boolean;
   fullWidth?: boolean;
+  children?: ReactNode;
   className?: string;
 }
 

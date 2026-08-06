@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, useAnimation } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { PageLayout } from '@/components/layout/PageLayout';
+import { useSession } from '@/hooks/useSession';
+import { useAppStore } from '@/stores/appStore';
+import { api } from '@/lib/api';
 import styles from './LandingPage.module.css';
 
 const FEATURES = [
@@ -23,12 +26,13 @@ const FEATURES = [
   },
 ];
 
-/* Simple rolling number hook */
-function useCounter(target: number) {
-  const [count, setCount] = useState(target - 100);
+/** Animates a number from start → target */
+function useAnimatedCount(target: number) {
+  const [count, setCount] = useState(Math.max(0, target - 80));
   useEffect(() => {
-    let current = count;
-    const step = Math.ceil((target - current) / 20);
+    if (target <= 0) return;
+    let current = Math.max(0, target - 80);
+    const step = Math.max(1, Math.ceil((target - current) / 25));
     const timer = setInterval(() => {
       current += step;
       if (current >= target) {
@@ -37,7 +41,7 @@ function useCounter(target: number) {
       } else {
         setCount(current);
       }
-    }, 50);
+    }, 40);
     return () => clearInterval(timer);
   }, [target]);
   return count;
@@ -45,11 +49,42 @@ function useCounter(target: number) {
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const onlineCount = useCounter(12483);
+  const { status: sessionStatus } = useSession();
+  const onlineCountRaw = useAppStore((s) => s.onlineCount);
+  const setOnlineCount = useAppStore((s) => s.setOnlineCount);
+  const [isStarting, setIsStarting] = useState(false);
 
-  const handleStartChat = () => {
-    navigate('/chat');
-  };
+  // Fetch real online count from backend analytics endpoint
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const res = await api.getAnalytics();
+        if (!cancelled && res.concurrentUsers != null) {
+          setOnlineCount(res.concurrentUsers);
+        }
+      } catch {
+        // Backend unreachable in dev — keep at 0
+      }
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [setOnlineCount]);
+
+  const displayCount = useAnimatedCount(onlineCountRaw > 0 ? onlineCountRaw : 0);
+
+  const handleStartChat = useCallback(async () => {
+    if (isStarting) return;
+    setIsStarting(true);
+    try {
+      navigate('/chat');
+    } finally {
+      setIsStarting(false);
+    }
+  }, [isStarting, navigate]);
+
+  const isSessionLoading = sessionStatus === 'loading';
 
   return (
     <PageLayout>
@@ -73,8 +108,15 @@ export function LandingPage() {
             transition={{ duration: 0.8, delay: 0.15, ease: 'easeOut' }}
             className={styles.ctaGroup}
           >
-            <Button size="xl" glow onClick={handleStartChat} iconRight={<span aria-hidden="true">→</span>}>
-              Start Video Chat
+            <Button
+              id="start-chat-btn"
+              size="xl"
+              glow
+              onClick={handleStartChat}
+              disabled={isStarting || isSessionLoading}
+              iconRight={<span aria-hidden="true">{isStarting ? '⏳' : '→'}</span>}
+            >
+              {isSessionLoading ? 'Connecting...' : isStarting ? 'Starting...' : 'Start Video Chat'}
             </Button>
             <p className={styles.heroSubtext}>No sign-up required.</p>
           </motion.div>
@@ -84,7 +126,9 @@ export function LandingPage() {
       <section className={styles.stats}>
         <div className={styles.statsInner}>
           <span className={styles.onlineDot} />
-          <span className={styles.onlineCount}>{onlineCount.toLocaleString()}</span>
+          <span className={styles.onlineCount}>
+            {displayCount > 0 ? displayCount.toLocaleString() : '—'}
+          </span>
           <span>people chatting right now</span>
         </div>
       </section>

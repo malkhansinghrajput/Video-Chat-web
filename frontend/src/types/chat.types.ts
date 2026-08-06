@@ -3,7 +3,7 @@
 export interface Message {
   id: string;
   text: string;
-  sender: 'self' | 'partner';
+  sender: 'me' | 'self' | 'partner';
   timestamp: number;
-  status: 'sent' | 'delivered' | 'failed';
+  status?: 'sent' | 'delivered' | 'failed';
 }
