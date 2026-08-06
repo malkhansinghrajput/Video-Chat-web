@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 
-export type SessionStatus = 'idle' | 'loading' | 'ready' | 'error' | 'banned';
+export type SessionStatus = 'idle' | 'loading' | 'ready' | 'error' | 'banned' | 'rate_limited';
 
 export interface SessionInfo {
   sessionId: string;
@@ -102,9 +102,19 @@ export function useSession(): UseSessionReturn {
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Session init failed';
+
+      // Detect rate limit (429) — do NOT retry, show specific message
+      // Retrying on 429 would only make it worse
+      if (msg.toLowerCase().includes('too many') || msg.toLowerCase().includes('rate limit') || msg.includes('429')) {
+        setError('Too many requests from your device. Please wait a few minutes and refresh the page.');
+        setStatus('rate_limited');
+        // Keep initRef.current = true so automatic retries don't happen
+        return;
+      }
+
       setError(msg);
       setStatus('error');
-      initRef.current = false; // allow retry
+      initRef.current = false; // allow retry on non-rate-limit errors
     }
   }, []);
 
@@ -120,3 +130,4 @@ export function useSession(): UseSessionReturn {
 
   return { session, status, error, reinit };
 }
+

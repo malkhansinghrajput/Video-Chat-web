@@ -209,9 +209,11 @@ export function ChatRoom() {
             >
               {isLoading
                 ? 'Initialising session...'
-                : sessionStatus === 'error'
-                  ? 'Session error — retrying...'
-                  : 'Finding partner...'}
+                : sessionStatus === 'rate_limited'
+                  ? 'Too many requests — please wait & refresh'
+                  : sessionStatus === 'error'
+                    ? 'Session error — retrying...'
+                    : 'Finding partner...'}
             </motion.h2>
             <p className={styles.waitText}>
               {isConnected ? 'Searching globally' : 'Establishing connection...'}
