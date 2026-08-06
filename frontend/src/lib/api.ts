@@ -120,16 +120,9 @@ export const api = {
 
   /** Get live analytics (online count) — hits /health/analytics/live */
   getAnalytics(): Promise<OnlineCountResponse> {
-<<<<<<< HEAD
     const backendUrl = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3001';
     // Use full backend URL — no Vite proxy is configured for /health routes
     return fetch(`${backendUrl}/health/analytics/live`)
       .then((r) => r.json()) as Promise<OnlineCountResponse>;
-=======
-    const url = import.meta.env.VITE_BACKEND_URL
-      ? `${import.meta.env.VITE_BACKEND_URL}/health/analytics/live`
-      : '/health/analytics/live';
-    return fetch(url).then((r) => r.json()) as Promise<OnlineCountResponse>;
->>>>>>> ca9200e7043626285845337dae8828eeb939a17e
   },
 };
