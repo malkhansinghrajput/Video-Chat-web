@@ -120,8 +120,9 @@ export const api = {
 
   /** Get live analytics (online count) — hits /health/analytics/live */
   getAnalytics(): Promise<OnlineCountResponse> {
-    // This endpoint returns { concurrentUsers, usersInQueue, timestamp } directly
-    return fetch('/health/analytics/live')
-      .then((r) => r.json()) as Promise<OnlineCountResponse>;
+    const url = import.meta.env.VITE_BACKEND_URL
+      ? `${import.meta.env.VITE_BACKEND_URL}/health/analytics/live`
+      : '/health/analytics/live';
+    return fetch(url).then((r) => r.json()) as Promise<OnlineCountResponse>;
   },
 };
