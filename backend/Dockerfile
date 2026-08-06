@@ -8,11 +8,14 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
+
+# Remove devDependencies before copying to production image
+RUN npm prune --omit=dev
 
 # Stage 2: Production Runtime
 FROM node:20-alpine AS runner
