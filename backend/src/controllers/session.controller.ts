@@ -107,18 +107,34 @@ export class SessionController {
     const session = (req as Request & { session: { sessionId: string } }).session;
     const credentials = sessionService.getTurnCredentials(session.sessionId);
 
+    const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.services.mozilla.com' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelay',
+        credential: 'openrelay',
+      },
+    ];
+
+    if (credentials.urls && !credentials.urls.includes('localhost')) {
+      iceServers.push({
+        urls: credentials.urls,
+        username: credentials.username,
+        credential: credentials.credential,
+      });
+    }
+
     res.json({
       success: true,
       data: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          {
-            urls: credentials.urls,
-            username: credentials.username,
-            credential: credentials.credential,
-          },
-        ],
+        iceServers,
         ttl: credentials.ttl,
       },
       timestamp: Date.now(),
