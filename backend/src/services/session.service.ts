@@ -134,27 +134,30 @@ export class SessionService {
       }
     }
 
-    // Slow path: check MongoDB
-    const now = new Date();
-    const activeBan = await Ban.findOne({
-      targetHash: {
-        $in: [params.sessionId, params.ipHash, params.fingerprintHash],
-      },
-      $or: [{ isPermanent: true }, { expiresAt: { $gt: now } }],
-    });
-
-    if (activeBan) {
-      // Cache in Redis for 5 minutes to avoid repeated DB hits
-      const cacheData = JSON.stringify({
-        reason: activeBan.reason,
-        until: activeBan.expiresAt?.getTime(),
+    // Slow path: check MongoDB, but only if connected (graceful fallback for dev)
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState === 1) {
+      const now = new Date();
+      const activeBan = await Ban.findOne({
+        targetHash: {
+          $in: [params.sessionId, params.ipHash, params.fingerprintHash],
+        },
+        $or: [{ isPermanent: true }, { expiresAt: { $gt: now } }],
       });
-      await redisSessions.setex(RedisKeys.ban(params.sessionId), 300, cacheData);
-      return {
-        banned: true,
-        reason: activeBan.reason,
-        until: activeBan.expiresAt?.getTime(),
-      };
+
+      if (activeBan) {
+        // Cache in Redis for 5 minutes to avoid repeated DB hits
+        const cacheData = JSON.stringify({
+          reason: activeBan.reason,
+          until: activeBan.expiresAt?.getTime(),
+        });
+        await redisSessions.setex(RedisKeys.ban(params.sessionId), 300, cacheData);
+        return {
+          banned: true,
+          reason: activeBan.reason,
+          until: activeBan.expiresAt?.getTime(),
+        };
+      }
     }
 
     return { banned: false };
