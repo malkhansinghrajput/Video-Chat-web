@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { IconButton } from '@/components/ui/IconButton';
@@ -29,7 +29,6 @@ export function ChatRoom() {
   const status = useCallStore((s) => s.status);
   const matchInfo = useCallStore((s) => s.matchInfo);
   const isMicMuted = useCallStore((s) => s.isMicMuted);
-  const isCameraOff = useCallStore((s) => s.isCameraOff);
   const connectionQuality = useCallStore((s) => s.connectionQuality);
   const rtt = useCallStore((s) => s.rtt);
   const messages = useCallStore((s) => s.messages);
@@ -38,7 +37,6 @@ export function ChatRoom() {
   const isPartnerTyping = useCallStore((s) => s.isPartnerTyping);
   const callStartTime = useCallStore((s) => s.callStartTime);
   const toggleMic = useCallStore((s) => s.toggleMic);
-  const toggleCamera = useCallStore((s) => s.toggleCamera);
   const toggleChat = useCallStore((s) => s.toggleChat);
   const addMessage = useCallStore((s) => s.addMessage);
   const markRead = useCallStore((s) => s.markRead);
@@ -53,12 +51,58 @@ export function ChatRoom() {
     callError,
     requestMedia,
     setMicMuted,
-    setCameraOff,
   } = useWebRTC(matchInfo);
 
-  // ── Sync mic/camera toggles to actual media tracks ───────────────────────
+  // ── Sync mic toggle to actual media tracks ───────────────────────
   useEffect(() => { setMicMuted(isMicMuted); }, [isMicMuted, setMicMuted]);
-  useEffect(() => { setCameraOff(isCameraOff); }, [isCameraOff, setCameraOff]);
+
+  // ── Touch / Swipe-Up Gesture Handling for Mobile ─────────────────────────
+  const touchStartY = useRef<number | null>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchStartTime = useRef<number>(0);
+  const [swipeFeedback, setSwipeFeedback] = useState(false);
+
+  const triggerNextWithFeedback = useCallback(() => {
+    if (!isConnected) return;
+    setSwipeFeedback(true);
+    skipPartner();
+    setTimeout(() => {
+      setSwipeFeedback(false);
+    }, 700);
+  }, [isConnected, skipPartner]);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    // Don't trigger swipe inside chat drawer, buttons, or inputs
+    if (
+      target.closest('button') ||
+      target.closest('input') ||
+      target.closest(`.${styles.chatPanel}`)
+    ) {
+      return;
+    }
+    touchStartY.current = e.touches[0].clientY;
+    touchStartX.current = e.touches[0].clientX;
+    touchStartTime.current = Date.now();
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartY.current === null || touchStartX.current === null) return;
+
+    const endY = e.changedTouches[0].clientY;
+    const endX = e.changedTouches[0].clientX;
+    const deltaY = touchStartY.current - endY; // positive = swipe up
+    const deltaX = Math.abs(touchStartX.current - endX);
+    const deltaTime = Date.now() - touchStartTime.current;
+
+    touchStartY.current = null;
+    touchStartX.current = null;
+
+    // Trigger swipe if user swiped UP by >50px, vertical displacement > horizontal, within 600ms
+    if (deltaY > 50 && deltaY > deltaX * 1.1 && deltaTime < 600) {
+      triggerNextWithFeedback();
+    }
+  };
 
   // ── Auto-join queue once connected ────────────────────────────────────────
   useEffect(() => {
@@ -114,7 +158,11 @@ export function ChatRoom() {
   const isInCall = status === 'matched' || status === 'connected';
 
   return (
-    <div className={styles.container}>
+    <div
+      className={styles.container}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
 
       {/* Network HUD */}
       <motion.div
@@ -134,6 +182,52 @@ export function ChatRoom() {
                 : 'Connected'}
         </span>
       </motion.div>
+
+      {/* Mobile Swipe-Up Hint Pill */}
+      <AnimatePresence>
+        {isConnected && !isChatOpen && (
+          <motion.div
+            key="swipe-hint"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className={styles.swipeHint}
+          >
+            <motion.span
+              animate={{ y: [-3, 3, -3] }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+            >
+              👆
+            </motion.span>
+            <span>Swipe up for next</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Swipe Feedback Overlay */}
+      <AnimatePresence>
+        {swipeFeedback && (
+          <motion.div
+            key="swipe-feedback"
+            initial={{ opacity: 0, y: 40, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -40, scale: 0.9 }}
+            transition={{ duration: 0.25 }}
+            className={styles.swipeFeedbackOverlay}
+          >
+            <motion.div
+              animate={{ y: [-5, -25] }}
+              transition={{ duration: 0.4, repeat: Infinity, repeatType: 'reverse' }}
+              style={{ fontSize: '2.4rem' }}
+            >
+              ⬆️
+            </motion.div>
+            <span style={{ fontWeight: 600, fontSize: '1.05rem', letterSpacing: '0.5px' }}>
+              Skipping to next...
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Camera Permission Denied Banner */}
       <AnimatePresence>
@@ -216,7 +310,7 @@ export function ChatRoom() {
                     : 'Finding partner...'}
             </motion.h2>
             <p className={styles.waitText}>
-              {isConnected ? 'Searching globally' : 'Establishing connection...'}
+              {isConnected ? 'Searching globally • Swipe up to skip' : 'Establishing connection...'}
             </p>
           </motion.div>
         ) : (
@@ -247,8 +341,9 @@ export function ChatRoom() {
       <motion.div
         className={styles.localVideo}
         drag
-        dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+        dragConstraints={{ left: -180, right: 10, top: 0, bottom: 350 }}
         dragElastic={0.1}
+        whileDrag={{ scale: 1.05 }}
       >
         {localStream ? (
           <video
@@ -261,12 +356,12 @@ export function ChatRoom() {
         ) : (
           <div style={{
             width: '100%', height: '100%',
-            background: '#333',
+            background: '#222',
             borderRadius: 'inherit',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '2rem',
+            fontSize: '1.8rem',
           }}>
-            📷
+            👤
           </div>
         )}
       </motion.div>
@@ -299,14 +394,10 @@ export function ChatRoom() {
           onClick={toggleMic}
         />
         <IconButton
-          icon={isCameraOff ? '🚫' : '📷'}
-          tooltip={isCameraOff ? 'Turn on Camera' : 'Turn off Camera'}
-          onClick={toggleCamera}
-        />
-        <IconButton
           icon="⏭"
+          size="lg"
           variant="filled"
-          tooltip="Skip (Space)"
+          tooltip="Next (Space or Swipe Up)"
           onClick={handleSkip}
           disabled={!isConnected}
         />

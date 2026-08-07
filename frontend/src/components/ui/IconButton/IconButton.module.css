@@ -6,6 +6,7 @@
   cursor: pointer;
   position: relative;
   border-radius: var(--radius-full);
+  line-height: 1;
   transition:
     background var(--duration-fast) var(--ease-out),
     transform var(--duration-fast) var(--ease-out),
@@ -73,12 +74,13 @@
 }
 
 .danger {
-  background: var(--danger-subtle);
-  color: var(--danger);
+  background: var(--danger);
+  color: white;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
 }
 
 .danger:hover:not(:disabled) {
-  background: var(--danger);
+  background: #dc2626;
   color: white;
 }
 
@@ -99,11 +101,18 @@
   position: absolute;
   top: -2px;
   right: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ─── Tooltip ─── */
 .tooltipWrapper {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .tooltip {
@@ -127,4 +136,11 @@
 
 .tooltipWrapper:hover .tooltip {
   opacity: 1;
+}
+
+/* Hide tooltips on touch devices / small mobile screens to prevent popups */
+@media (hover: none), (max-width: 768px) {
+  .tooltip {
+    display: none !important;
+  }
 }
