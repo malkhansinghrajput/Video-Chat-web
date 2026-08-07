@@ -36,9 +36,6 @@ export async function connectDatabase(): Promise<void> {
 
 export async function disconnectDatabase(): Promise<void> {
   await mongoose.disconnect();
-  if (memoryServer) {
-    await memoryServer.stop();
-  }
   logger.info('MongoDB: disconnected gracefully');
 }
 
