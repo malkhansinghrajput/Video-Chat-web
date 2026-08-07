@@ -216,9 +216,11 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         let iceServers = DEFAULT_ICE_SERVERS;
         try {
           const res = await api.getIceServers();
-          if (res.data.iceServers?.length) iceServers = res.data.iceServers;
+          if (res.data.iceServers?.length) {
+            iceServers = [...res.data.iceServers, ...DEFAULT_ICE_SERVERS];
+          }
         } catch {
-          console.warn('[WebRTC] Using default STUN (TURN fetch failed)');
+          console.warn('[WebRTC] Using default STUN/TURN servers');
         }
 
         if (!mounted) return;
@@ -290,6 +292,22 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
+        // ── ICE Candidate Queue for early candidates ──────────────────────────
+        const iceCandidateQueue: RTCIceCandidateInit[] = [];
+
+        const processIceQueue = async () => {
+          while (iceCandidateQueue.length > 0) {
+            const candidate = iceCandidateQueue.shift();
+            if (candidate) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              } catch (err) {
+                console.warn('[WebRTC] Error processing queued ICE candidate:', err);
+              }
+            }
+          }
+        };
+
         // 4. Offer / Answer exchange
         if (matchInfo!.role === 'initiator') {
           const offer = await pc.createOffer();
@@ -305,27 +323,45 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         const handleOffer = async (data: unknown) => {
           const payload = data as OfferPayload;
           if (payload.roomId !== matchInfo!.roomId) return;
-          await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket!.emit(SocketEvents.WEBRTC_ANSWER, {
-            roomId: matchInfo!.roomId,
-            sdp:    answer,
-          });
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+            await processIceQueue();
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket!.emit(SocketEvents.WEBRTC_ANSWER, {
+              roomId: matchInfo!.roomId,
+              sdp:    answer,
+            });
+          } catch (err) {
+            console.error('[WebRTC] Error handling offer:', err);
+          }
         };
 
         const handleAnswer = async (data: unknown) => {
           const payload = data as AnswerPayload;
           if (payload.roomId !== matchInfo!.roomId) return;
           if (pc.signalingState !== 'have-local-offer') return;
-          await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+            await processIceQueue();
+          } catch (err) {
+            console.error('[WebRTC] Error handling answer:', err);
+          }
         };
 
         const handleIce = async (data: unknown) => {
           const payload = data as IcePayload;
           if (payload.roomId !== matchInfo!.roomId) return;
-          try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); }
-          catch { /* ignore stale candidates */ }
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+            } catch (err) {
+              console.warn('[WebRTC] Error adding ICE candidate:', err);
+            }
+          } else {
+            // Remote description not set yet — queue candidate until setRemoteDescription finishes!
+            iceCandidateQueue.push(payload.candidate);
+          }
         };
 
         const handlePeerLeft = () => {
