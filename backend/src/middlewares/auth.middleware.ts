@@ -3,6 +3,7 @@ import { sessionService } from '../services/session.service';
 import { hashSensitiveData } from '../utils/token.util';
 import { logger } from '../config/logger';
 import { ErrorCodes } from '../constants';
+import { env } from '../config/env';
 
 /**
  * Validates the X-Session-Token header on protected routes.
@@ -92,4 +93,15 @@ export async function socketAuthMiddleware(
     logger.error('socketAuthMiddleware: error', { error: String(err) });
     next(new Error('AUTH_ERROR'));
   }
+}
+
+/** Separate administrative credential; anonymous session tokens never grant moderation access. */
+export function adminAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const authorization = req.headers.authorization;
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : req.headers['x-admin-token'];
+  if (token !== env.ADMIN_API_TOKEN) {
+    res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Admin authorization required' }, timestamp: Date.now() });
+    return;
+  }
+  next();
 }

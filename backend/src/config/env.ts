@@ -35,6 +35,15 @@ function optionalBool(key: string, fallback: boolean): boolean {
   return val.toLowerCase() === 'true' || val === '1';
 }
 
+function secret(key: string, developmentFallback: string): string {
+  const value = process.env[key];
+  if (value) return value;
+  if (process.env['NODE_ENV'] === 'production') {
+    throw new Error(`Missing required environment variable in production: ${key}`);
+  }
+  return developmentFallback;
+}
+
 export const env = {
   // App
   NODE_ENV: optional('NODE_ENV', 'development') as 'development' | 'production' | 'test',
@@ -43,7 +52,7 @@ export const env = {
   LOG_LEVEL: optional('LOG_LEVEL', 'debug'),
 
   // Security
-  SESSION_HMAC_SECRET: optional('SESSION_HMAC_SECRET', 'change-me-in-production-minimum-32-chars!!'),
+  SESSION_HMAC_SECRET: secret('SESSION_HMAC_SECRET', 'change-me-in-development-minimum-32-chars!!'),
   NONCE_TTL_SECONDS: optionalInt('NONCE_TTL_SECONDS', 60),
 
   // CORS
@@ -65,7 +74,8 @@ export const env = {
 
   // TURN / Coturn
   TURN_SERVER_URLS: optional('TURN_SERVER_URLS', 'stun:stun.l.google.com:19302'),
-  TURN_SERVER_SECRET: optional('TURN_SERVER_SECRET', 'change-me-turn-shared-secret'),
+  TURN_SERVER_SECRET: secret('TURN_SERVER_SECRET', 'change-me-turn-shared-secret'),
+  ADMIN_API_TOKEN: secret('ADMIN_API_TOKEN', 'development-admin-token'),
   TURN_CREDENTIAL_TTL_SECONDS: optionalInt('TURN_CREDENTIAL_TTL_SECONDS', 3600),
 
 
@@ -88,6 +98,9 @@ export const env = {
   MATCH_INTEREST_RELAXATION_SECONDS: optionalInt('MATCH_INTEREST_RELAXATION_SECONDS', 15),
   MATCH_GLOBAL_FALLBACK_SECONDS: optionalInt('MATCH_GLOBAL_FALLBACK_SECONDS', 30),
   QUEUE_ENTRY_TTL_SECONDS: optionalInt('QUEUE_ENTRY_TTL_SECONDS', 60),
+  QUEUE_CLEANUP_INTERVAL_MS: optionalInt('QUEUE_CLEANUP_INTERVAL_MS', 5_000),
+  QUEUE_CLEANUP_BATCH_SIZE: optionalInt('QUEUE_CLEANUP_BATCH_SIZE', 100),
+  MATCH_CANDIDATE_BATCH_SIZE: optionalInt('MATCH_CANDIDATE_BATCH_SIZE', 1_000),
 
   // Moderation
   AUTO_BAN_REPORT_THRESHOLD: optionalInt('AUTO_BAN_REPORT_THRESHOLD', 10),

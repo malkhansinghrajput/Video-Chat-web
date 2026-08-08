@@ -50,12 +50,15 @@ export class SessionService {
 
     // Store in Redis with TTL
     const key = RedisKeys.session.data(sessionId);
-    await redisSessions.hset(key, this.flattenSession(session));
-    await redisSessions.expire(key, env.SESSION_TTL_SECONDS);
+    const transaction = redisSessions.multi();
+    transaction.hset(key, this.flattenSession(session));
+    transaction.expire(key, env.SESSION_TTL_SECONDS);
 
     // Store token → sessionId mapping
     const tokenKey = RedisKeys.session.token(token);
-    await redisSessions.setex(tokenKey, env.SESSION_TTL_SECONDS, sessionId);
+    transaction.setex(tokenKey, env.SESSION_TTL_SECONDS, sessionId);
+    transaction.incr(RedisKeys.analytics.concurrentUsers());
+    await transaction.exec();
 
     // Persist to MongoDB async (non-blocking)
     Session.create({
@@ -68,7 +71,6 @@ export class SessionService {
     }).catch((err) => logError('SessionService: failed to persist session', err));
 
     // Track concurrent users
-    await redisAnalytics.incr(RedisKeys.analytics.concurrentUsers());
 
     logger.debug('SessionService: session created', { sessionId, country: params.country });
     return { sessionId, token };

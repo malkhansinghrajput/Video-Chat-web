@@ -49,6 +49,8 @@ export const PubSubChannels = {
 export const RedisKeys = {
   queue: {
     global: () => 'queue:global',
+    entry: (sessionId: string) => `queue:entry:${sessionId}`,
+    reservation: (sessionId: string) => `match:reservation:${sessionId}`,
     byCountry: (cc: string) => `queue:country:${cc}`,
     byLanguage: (lang: string) => `queue:lang:${lang}`,
     matchLock: (id: string) => `match:lock:${id}`,

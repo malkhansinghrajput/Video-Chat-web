@@ -44,6 +44,10 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         socket.emit(SocketEvents.SESSION_BANNED, { reason: 'Banned', isPermanent: false });
         return;
       }
+      if (session.status !== 'idle') {
+        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.ALREADY_IN_QUEUE, message: 'Session is not available for matching' });
+        return;
+      }
 
       // Build queue entry (use session data, allow preference override)
       const entry: QueueEntry = {
@@ -56,7 +60,11 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         priority: 0,
       };
 
-      await queueService.enqueue(entry);
+      const enqueued = await queueService.enqueue(entry);
+      if (!enqueued) {
+        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.ALREADY_IN_QUEUE, message: 'Already in queue' });
+        return;
+      }
       await sessionService.updateSession(data.sessionId, { status: 'searching' } as never);
 
       const queueDepth = await queueService.getQueueDepth();
@@ -149,7 +157,8 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         priority: 1,
       };
 
-      await queueService.enqueue(entry);
+      const enqueued = await queueService.enqueue(entry);
+      if (!enqueued) return;
       await sessionService.updateSession(data.sessionId, { status: 'searching' } as never);
       socket.emit(SocketEvents.QUEUE_JOINED, { position: await queueService.getQueueDepth() });
 

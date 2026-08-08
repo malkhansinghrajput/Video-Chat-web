@@ -11,6 +11,8 @@ import { handleSignalingEvents } from './signaling.handler';
 import { handleChatEvents } from './chat.handler';
 import { handleReportEvents } from './report.handler';
 
+const disconnectTimers = new Map<string, NodeJS.Timeout>();
+
 // ─────────────────────────────────────────────
 // Connection Handler
 // Entry point for all socket connections
@@ -23,6 +25,12 @@ export function registerConnectionHandlers(io: Server): void {
   io.on('connection', async (socket: Socket) => {
     const data = socket.data as SocketData;
     const { sessionId } = data;
+
+    const pendingDisconnect = disconnectTimers.get(sessionId);
+    if (pendingDisconnect) {
+      clearTimeout(pendingDisconnect);
+      disconnectTimers.delete(sessionId);
+    }
 
     logger.info('Socket: client connected', { sessionId, socketId: socket.id });
 
@@ -135,24 +143,34 @@ async function handleDisconnect(socket: Socket, io: Server, reason: string): Pro
 
     // If in a room, notify peer after grace period
     if (session.roomId && (session.status === 'matched' || session.status === 'connected')) {
-      setTimeout(async () => {
-        // Check if reconnected within grace period
-        const current = await sessionService.getSession(sessionId);
-        if (!current || current.socketId !== socket.id) return; // reconnected
-
-        // Notify peer
-        if (session.peerSocketId) {
-          io.to(session.peerSocketId).emit(SocketEvents.PEER_LEFT, {
-            reason: 'disconnect',
-          });
-        }
-
-        // Update session status
-        await sessionService.updateSession(sessionId, { status: 'idle', roomId: undefined, peerId: undefined, peerSocketId: undefined } as Partial<SocketData>);
+      const timer = setTimeout(() => {
+        void finalizeDisconnect(socket, io, sessionId, session.peerSocketId, session.roomId!);
       }, Limits.RECONNECT_GRACE_PERIOD_MS);
+      disconnectTimers.set(sessionId, timer);
     }
   } catch (err) {
     logError('Socket: error during disconnect cleanup', err, { sessionId });
+  }
+}
+
+async function finalizeDisconnect(
+  socket: Socket,
+  io: Server,
+  sessionId: string,
+  peerSocketId: string | undefined,
+  roomId: string,
+): Promise<void> {
+  try {
+    disconnectTimers.delete(sessionId);
+        // Check if reconnected within grace period
+    const current = await sessionService.getSession(sessionId);
+    if (!current || current.socketId !== socket.id) return;
+
+    if (peerSocketId) io.to(peerSocketId).emit(SocketEvents.PEER_LEFT, { reason: 'disconnect' });
+
+    await sessionService.updateSession(sessionId, { status: 'idle', roomId: undefined, peerId: undefined, peerSocketId: undefined } as Partial<SocketData>);
+  } catch (err) {
+    logError('Socket: error finalizing disconnect', err, { sessionId });
   }
 }
 

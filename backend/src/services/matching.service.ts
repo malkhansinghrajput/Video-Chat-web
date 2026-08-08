@@ -14,54 +14,75 @@ import type { QueueEntry, MatchResult, Room } from '../types';
 
 export class QueueService {
   /**
+   * Queue model: the ZSET contains only session IDs (the FIFO order), while a
+   * short-lived hash contains the entry metadata.  Keeping JSON out of the
+   * ZSET lets all normal queue operations address a member directly.
+   */
+  private static readonly enqueueScript = `
+    if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+    redis.call('HSET', KEYS[2], 'sessionId', ARGV[1], 'socketId', ARGV[2],
+      'country', ARGV[3], 'language', ARGV[4], 'interests', ARGV[5],
+      'joinedAt', ARGV[6], 'priority', ARGV[7])
+    redis.call('EXPIRE', KEYS[2], ARGV[8])
+    redis.call('ZADD', KEYS[1], ARGV[6], ARGV[1])
+    return 1
+  `;
+
+  private static readonly dequeueScript = `
+    redis.call('ZREM', KEYS[1], ARGV[1])
+    redis.call('DEL', KEYS[2])
+    return 1
+  `;
+
+  private static readonly cleanupScript = `
+    local members = redis.call('ZRANGE', KEYS[1], 0, ARGV[1] - 1)
+    local removed = 0
+    for _, member in ipairs(members) do
+      if redis.call('EXISTS', ARGV[2] .. member) == 0 then
+        redis.call('ZREM', KEYS[1], member)
+        removed = removed + 1
+      end
+    end
+    return removed
+  `;
+
+  /**
    * Add a user to the global matching queue.
    * Uses timestamp as score for FIFO ordering.
    */
-  async enqueue(entry: QueueEntry): Promise<void> {
-    const key = RedisKeys.queue.global();
-    const value = JSON.stringify(entry);
-    const score = entry.joinedAt;
-
-    // Add to global queue
-    await redisQueues.zadd(key, score, value);
-
-    // Add to country-specific queue for faster country matching
-    if (entry.country !== 'XX') {
-      const countryKey = RedisKeys.queue.byCountry(entry.country);
-      await redisQueues.zadd(countryKey, score, value);
-      await redisQueues.expire(countryKey, Limits.QUEUE_ENTRY_TTL_SECONDS * 2);
-    }
-
-    // Set TTL on global queue entries via separate tracker
-    await redisQueues.setex(
-      `queue:entry:${entry.sessionId}`,
-      Limits.QUEUE_ENTRY_TTL_SECONDS,
-      '1',
+  async enqueue(entry: QueueEntry): Promise<boolean> {
+    const result = await redisQueues.eval(
+      QueueService.enqueueScript,
+      2,
+      RedisKeys.queue.global(),
+      RedisKeys.queue.entry(entry.sessionId),
+      entry.sessionId,
+      entry.socketId,
+      entry.country,
+      entry.language,
+      JSON.stringify(entry.interests),
+      String(entry.joinedAt),
+      String(entry.priority),
+      String(env.QUEUE_ENTRY_TTL_SECONDS),
     );
-
-    logger.debug('QueueService: enqueued', { sessionId: entry.sessionId });
+    const inserted = Number(result) === 1;
+    if (inserted) logger.debug('QueueService: enqueued', { sessionId: entry.sessionId });
+    return inserted;
   }
 
   /**
    * Remove a user from all queues.
    */
   async dequeue(sessionId: string, socketId: string): Promise<void> {
-    // We must find and remove the entry by scanning (sessionId embedded in JSON)
-    // This is O(N) but acceptable at this scale; at 100k+ migrate to hash index
-    const entries = await redisQueues.zrange(RedisKeys.queue.global(), 0, -1);
-    for (const raw of entries) {
-      try {
-        const entry = JSON.parse(raw) as QueueEntry;
-        if (entry.sessionId === sessionId || entry.socketId === socketId) {
-          await redisQueues.zrem(RedisKeys.queue.global(), raw);
-          if (entry.country !== 'XX') {
-            await redisQueues.zrem(RedisKeys.queue.byCountry(entry.country), raw);
-          }
-          break;
-        }
-      } catch { /* ignore parse errors */ }
-    }
-    await redisQueues.del(`queue:entry:${sessionId}`);
+    // socketId is retained in the signature for compatibility with callers.
+    void socketId;
+    await redisQueues.eval(
+      QueueService.dequeueScript,
+      2,
+      RedisKeys.queue.global(),
+      RedisKeys.queue.entry(sessionId),
+      sessionId,
+    );
     logger.debug('QueueService: dequeued', { sessionId });
   }
 
@@ -69,8 +90,7 @@ export class QueueService {
    * Check if a session is currently in the queue.
    */
   async isInQueue(sessionId: string): Promise<boolean> {
-    const ttlKey = `queue:entry:${sessionId}`;
-    const exists = await redisQueues.exists(ttlKey);
+    const exists = await redisQueues.exists(RedisKeys.queue.entry(sessionId));
     return exists === 1;
   }
 
@@ -85,30 +105,50 @@ export class QueueService {
    * Remove stale entries from the queue (entries whose TTL key has expired).
    * Called by the cleanup worker periodically.
    */
-  async cleanStaleEntries(): Promise<number> {
-    const entries = await redisQueues.zrange(RedisKeys.queue.global(), 0, -1);
-    let removed = 0;
+  async cleanStaleEntries(limit = env.QUEUE_CLEANUP_BATCH_SIZE): Promise<number> {
+    const removed = await redisQueues.eval(
+      QueueService.cleanupScript,
+      1,
+      RedisKeys.queue.global(),
+      String(limit),
+      'queue:entry:',
+    );
 
-    for (const raw of entries) {
-      try {
-        const entry = JSON.parse(raw) as QueueEntry;
-        const ttlKey = `queue:entry:${entry.sessionId}`;
-        const exists = await redisQueues.exists(ttlKey);
-
-        if (!exists) {
-          await redisQueues.zrem(RedisKeys.queue.global(), raw);
-          if (entry.country !== 'XX') {
-            await redisQueues.zrem(RedisKeys.queue.byCountry(entry.country), raw);
-          }
-          removed++;
-        }
-      } catch { /* ignore */ }
+    const removedCount = Number(removed);
+    if (removedCount > 0) {
+      logger.debug('QueueService: cleaned stale entries', { removed: removedCount });
     }
+    return removedCount;
+  }
 
-    if (removed > 0) {
-      logger.debug('QueueService: cleaned stale entries', { removed });
+  async getCandidates(limit: number): Promise<QueueEntry[]> {
+    const sessionIds = await redisQueues.zrange(RedisKeys.queue.global(), 0, limit - 1);
+    if (!sessionIds.length) return [];
+    const pipeline = redisQueues.pipeline();
+    for (const sessionId of sessionIds) pipeline.hgetall(RedisKeys.queue.entry(sessionId));
+    const results = await pipeline.exec();
+    const entries: QueueEntry[] = [];
+    const stale: string[] = [];
+    for (let index = 0; index < sessionIds.length; index++) {
+      const data = results?.[index]?.[1] as Record<string, string> | undefined;
+      const entry = data && this.hydrateEntry(data);
+      if (entry) entries.push(entry);
+      else stale.push(sessionIds[index]!);
     }
-    return removed;
+    if (stale.length) await redisQueues.zrem(RedisKeys.queue.global(), ...stale);
+    return entries;
+  }
+
+  private hydrateEntry(data: Record<string, string>): QueueEntry | null {
+    if (!data['sessionId'] || !data['socketId'] || !data['joinedAt']) return null;
+    try {
+      return {
+        sessionId: data['sessionId'], socketId: data['socketId'],
+        country: data['country'] ?? 'XX', language: data['language'] ?? 'en',
+        interests: JSON.parse(data['interests'] ?? '[]') as string[],
+        joinedAt: Number(data['joinedAt']), priority: Number(data['priority'] ?? 0),
+      };
+    } catch { return null; }
   }
 }
 
@@ -118,6 +158,21 @@ export class QueueService {
 // ─────────────────────────────────────────────
 
 export class RoomService {
+  private static readonly commitMatchScript = `
+    if redis.call('GET', KEYS[5]) ~= ARGV[1] or redis.call('GET', KEYS[6]) ~= ARGV[1] then return 0 end
+    if redis.call('EXISTS', KEYS[7]) == 0 or redis.call('EXISTS', KEYS[8]) == 0 then return 0 end
+    if redis.call('EXISTS', KEYS[2]) == 0 or redis.call('EXISTS', KEYS[3]) == 0 then return 0 end
+    redis.call('ZREM', KEYS[1], ARGV[2], ARGV[3])
+    redis.call('DEL', KEYS[2], KEYS[3])
+    redis.call('HSET', KEYS[4], 'roomId', ARGV[4], 'sessionId1', ARGV[2], 'sessionId2', ARGV[3],
+      'socketId1', ARGV[5], 'socketId2', ARGV[6], 'createdAt', ARGV[7], 'status', 'active', 'turnCredentials', ARGV[8])
+    redis.call('EXPIRE', KEYS[4], ARGV[9])
+    redis.call('HSET', KEYS[7], 'status', 'matched', 'roomId', ARGV[4], 'peerId', ARGV[3], 'peerSocketId', ARGV[6], 'matchedAt', ARGV[7])
+    redis.call('EXPIRE', KEYS[7], ARGV[10])
+    redis.call('HSET', KEYS[8], 'status', 'matched', 'roomId', ARGV[4], 'peerId', ARGV[2], 'peerSocketId', ARGV[5], 'matchedAt', ARGV[7])
+    redis.call('EXPIRE', KEYS[8], ARGV[10])
+    return 1
+  `;
   /**
    * Create a room for two matched users.
    */
@@ -159,6 +214,29 @@ export class RoomService {
   /**
    * Get room data from Redis.
    */
+  /** Atomically commits queue removal, room creation and both session updates. */
+  async createMatchedRoom(a: QueueEntry, b: QueueEntry, ownerToken: string): Promise<Room | null> {
+    const roomId = generateRoomId();
+    const turnCredentials = sessionService.getTurnCredentials(roomId);
+    const createdAt = Date.now();
+    const committed = await redisSessions.eval(
+      RoomService.commitMatchScript,
+      8,
+      RedisKeys.queue.global(),
+      RedisKeys.queue.entry(a.sessionId),
+      RedisKeys.queue.entry(b.sessionId),
+      RedisKeys.session.room(roomId),
+      RedisKeys.queue.reservation(a.sessionId),
+      RedisKeys.queue.reservation(b.sessionId),
+      RedisKeys.session.data(a.sessionId),
+      RedisKeys.session.data(b.sessionId),
+      ownerToken, a.sessionId, b.sessionId, roomId, a.socketId, b.socketId,
+      String(createdAt), JSON.stringify(turnCredentials), '7200', String(env.SESSION_TTL_SECONDS),
+    );
+    if (Number(committed) !== 1) return null;
+    return { roomId, sessionIds: [a.sessionId, b.sessionId], socketIds: [a.socketId, b.socketId], createdAt, status: 'active', turnCredentials };
+  }
+
   async getRoom(roomId: string): Promise<Room | null> {
     const key = RedisKeys.session.room(roomId);
     const data = await redisSessions.hgetall(key);
@@ -212,6 +290,20 @@ export class RoomService {
 export class MatchingEngine {
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | null = null;
+  private cleanupTimer: NodeJS.Timeout | null = null;
+
+  private static readonly reservePairScript = `
+    if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+    return 1
+  `;
+  private static readonly releasePairScript = `
+    for _, key in ipairs(KEYS) do
+      if redis.call('GET', key) == ARGV[1] then redis.call('DEL', key) end
+    end
+    return 1
+  `;
 
   constructor(
     private readonly queueService: QueueService,
@@ -223,11 +315,18 @@ export class MatchingEngine {
     this.isRunning = true;
     logger.info('MatchingEngine: started');
     this.poll();
+    this.cleanupTimer = setInterval(() => {
+      this.queueService.cleanStaleEntries().catch((err) => logError('MatchingEngine: queue cleanup error', err));
+    }, env.QUEUE_CLEANUP_INTERVAL_MS);
+    this.cleanupTimer.unref();
   }
 
   stop(): void {
     this.isRunning = false;
     if (this.pollTimer) clearTimeout(this.pollTimer);
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.pollTimer = null;
+    this.cleanupTimer = null;
     logger.info('MatchingEngine: stopped');
   }
 
@@ -256,15 +355,9 @@ export class MatchingEngine {
   }
 
   private async runMatchingCycle(): Promise<void> {
-    // Get all candidates in FIFO order
-    const rawEntries = await redisQueues.zrange(RedisKeys.queue.global(), 0, -1, 'WITHSCORES');
-
-    const entries: QueueEntry[] = [];
-    for (let i = 0; i < rawEntries.length; i += 2) {
-      try {
-        entries.push(JSON.parse(rawEntries[i]!) as QueueEntry);
-      } catch { /* skip malformed */ }
-    }
+    // Candidates remain ordered by their joinedAt ZSET score. The bounded batch
+    // prevents one cycle from monopolising the event loop under a large queue.
+    const entries = await this.queueService.getCandidates(env.MATCH_CANDIDATE_BATCH_SIZE);
 
     if (entries.length < 2) return;
 
@@ -284,16 +377,16 @@ export class MatchingEngine {
         const minWait = Math.min(waitA, waitB);
 
         if (this.isCompatible(a, b, minWait)) {
-          const lockKey = [a.sessionId, b.sessionId].sort().join(':');
-          const lockAcquired = await this.acquireLock(lockKey);
-          if (!lockAcquired) continue;
+          const ownerToken = generateRoomId();
+          const reserved = await this.reservePair(a.sessionId, b.sessionId, ownerToken);
+          if (!reserved) continue;
 
           try {
-            await this.matchPair(a, b);
+            await this.matchPair(a, b, ownerToken);
             matched.add(a.sessionId);
             matched.add(b.sessionId);
           } finally {
-            await redisQueues.del(`match:lock:${lockKey}`);
+            await this.releasePair(a.sessionId, b.sessionId, ownerToken);
           }
           break; // a is matched, move to next
         }
@@ -324,40 +417,40 @@ export class MatchingEngine {
     return true;
   }
 
-  private async acquireLock(id: string): Promise<boolean> {
-    const key = `match:lock:${id}`;
-    const result = await redisQueues.set(key, '1', 'EX', 5, 'NX');
-    return result === 'OK';
+  private async reservePair(sessionIdA: string, sessionIdB: string, ownerToken: string): Promise<boolean> {
+    const result = await redisQueues.eval(
+      MatchingEngine.reservePairScript,
+      2,
+      RedisKeys.queue.reservation(sessionIdA),
+      RedisKeys.queue.reservation(sessionIdB),
+      ownerToken,
+      '5',
+    );
+    return Number(result) === 1;
   }
 
-  private async matchPair(a: QueueEntry, b: QueueEntry): Promise<void> {
-    // Remove both from queue
-    await this.queueService.dequeue(a.sessionId, a.socketId);
-    await this.queueService.dequeue(b.sessionId, b.socketId);
-
-    // Create room
-    const room = await this.roomService.createRoom(
-      a.sessionId, a.socketId,
-      b.sessionId, b.socketId,
+  private async releasePair(sessionIdA: string, sessionIdB: string, ownerToken: string): Promise<void> {
+    await redisQueues.eval(
+      MatchingEngine.releasePairScript,
+      2,
+      RedisKeys.queue.reservation(sessionIdA),
+      RedisKeys.queue.reservation(sessionIdB),
+      ownerToken,
     );
+  }
 
-    // Update session statuses
-    await Promise.all([
-      sessionService.updateSession(a.sessionId, {
-        status: 'matched',
-        roomId: room.roomId,
-        peerId: b.sessionId,
-        peerSocketId: b.socketId,
-        matchedAt: Date.now(),
-      } as Partial<import('../types').AnonymousSession>),
-      sessionService.updateSession(b.sessionId, {
-        status: 'matched',
-        roomId: room.roomId,
-        peerId: a.sessionId,
-        peerSocketId: a.socketId,
-        matchedAt: Date.now(),
-      } as Partial<import('../types').AnonymousSession>),
-    ]);
+  private async matchPair(a: QueueEntry, b: QueueEntry, ownerToken: string): Promise<void> {
+    // A reservation must still belong to this worker immediately before the
+    // irreversible transition. This prevents A:B / B:C overlap across workers.
+    const reservations = await redisQueues.mget(
+      RedisKeys.queue.reservation(a.sessionId),
+      RedisKeys.queue.reservation(b.sessionId),
+    );
+    if (reservations[0] !== ownerToken || reservations[1] !== ownerToken) return;
+
+    // Remove both from queue
+    const room = await this.roomService.createMatchedRoom(a, b, ownerToken);
+    if (!room) return;
 
     // Publish match event for signaling nodes to deliver
     const matchEvent = {

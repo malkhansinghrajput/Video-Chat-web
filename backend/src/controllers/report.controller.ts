@@ -65,7 +65,8 @@ export class ReportController {
    * GET /api/v1/reports/:reportId
    */
   async getReport(req: Request, res: Response): Promise<void> {
-    const report = await Report.findById(req.params['reportId']);
+    const session = (req as Request & { session: { sessionId: string } }).session;
+    const report = await Report.findOne({ _id: req.params['reportId'], reporterSessionId: session.sessionId });
     if (!report) {
       res.status(404).json({
         success: false,
