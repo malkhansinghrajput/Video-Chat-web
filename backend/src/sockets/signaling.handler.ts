@@ -79,10 +79,11 @@ export function handleSignalingEvents(socket: Socket, _io: Server): void {
         return; // silently drop invalid ICE candidates
       }
 
-      const isMember = await roomService.isRoomMember(payload.roomId, data.sessionId);
-      if (!isMember) return;
-
-      const peerSocketId = await roomService.getPeerSocketId(payload.roomId, data.sessionId);
+      // Match/reconnect code populates this server-trusted cache. Falling back
+      // to Redis keeps authorization correct after a cache miss.
+      const peerSocketId = data.activeRoomId === payload.roomId
+        ? data.peerSocketId
+        : await getAuthorizedPeerSocketId(payload.roomId, data);
       if (!peerSocketId) return;
 
       socket.to(peerSocketId).emit(SocketEvents.WEBRTC_ICE_CANDIDATE, {
@@ -114,5 +115,12 @@ export function handleSignalingEvents(socket: Socket, _io: Server): void {
       logError('Signaling: restart error', err);
     }
   });
+}
+
+async function getAuthorizedPeerSocketId(roomId: string, data: SocketData): Promise<string | null> {
+  const room = await roomService.getRoom(roomId);
+  if (!room || !room.sessionIds.includes(data.sessionId)) return null;
+  const index = room.sessionIds.indexOf(data.sessionId);
+  return room.socketIds[index === 0 ? 1 : 0] ?? null;
 }
 

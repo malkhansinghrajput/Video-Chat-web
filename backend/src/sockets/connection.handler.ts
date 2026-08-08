@@ -54,6 +54,8 @@ export function registerConnectionHandlers(io: Server): void {
         const session = await sessionService.getSession(sessionId);
         if (session?.roomId && (session.status === 'matched' || session.status === 'connected')) {
           await socket.join(`room:${session.roomId}`);
+          data.activeRoomId = session.roomId;
+          data.peerSocketId = session.peerSocketId;
           logger.info('Socket: reconnected to active room', {
             sessionId,
             roomId: session.roomId,
@@ -216,6 +218,20 @@ function setupMatchEventRelay(io: Server): void {
         // Join both sockets to room for signaling
         io.in(`session:${initiator.sessionId}`).socketsJoin(`room:${roomId}`);
         io.in(`session:${responder.sessionId}`).socketsJoin(`room:${roomId}`);
+        for (const socketId of io.sockets.adapter.rooms.get(`session:${initiator.sessionId}`) ?? []) {
+          const socket = io.sockets.sockets.get(socketId);
+          if (socket) {
+            (socket.data as SocketData).activeRoomId = roomId;
+            (socket.data as SocketData).peerSocketId = responder.socketId;
+          }
+        }
+        for (const socketId of io.sockets.adapter.rooms.get(`session:${responder.sessionId}`) ?? []) {
+          const socket = io.sockets.sockets.get(socketId);
+          if (socket) {
+            (socket.data as SocketData).activeRoomId = roomId;
+            (socket.data as SocketData).peerSocketId = initiator.socketId;
+          }
+        }
 
         logger.debug('Socket: match event relayed', { roomId });
       } catch (err) {

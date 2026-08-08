@@ -166,4 +166,8 @@ export interface SocketData {
   language: string;
   interests: string[];
   ipHash: string;
+  // Server-populated after a verified match; valid only for this socket's
+  // active room and used to avoid repeated Redis authorization reads.
+  activeRoomId?: string;
+  peerSocketId?: string;
 }
