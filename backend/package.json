@@ -11,7 +11,9 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "test": "jest --runInBand",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "validate:staging": "set NODE_ENV=test&& set ENV_FILE=.env.test&& ts-node scripts/validate-staging.ts",
+    "validate:staging:writes": "set NODE_ENV=test&& set ENV_FILE=.env.test&& set VALIDATION_ALLOW_DESTRUCTIVE=true&& ts-node scripts/validate-staging.ts --write"
   },
   "dependencies": {
     "compression": "^1.7.4",

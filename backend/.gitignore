@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+.env.test
+.env.staging
 *.log
 coverage/
 *.tsbuildinfo

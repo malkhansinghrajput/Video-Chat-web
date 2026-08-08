@@ -33,17 +33,23 @@ const base = {
   },
 };
 
+function createRedisClient(): Redis {
+  // Redis Cloud commonly supplies a TLS URL. Respect it when present; the
+  // host/port form remains the default for existing deployments.
+  return env.REDIS_URL ? new Redis(env.REDIS_URL, base) : new Redis({ ...base, db: 0 });
+}
+
 // Main shared client for all data operations
-export const redisMain = new Redis({ ...base, db: 0 });
+export const redisMain = createRedisClient();
 redisMain.on('connect', () => logger.info(`Redis[main]: connected`));
 redisMain.on('error', makeErrorThrottle('main'));
 
 // Pub/Sub dedicated clients
-export const redisPub = new Redis({ ...base, db: 0 });
+export const redisPub = createRedisClient();
 redisPub.on('connect', () => logger.info(`Redis[pub]: connected`));
 redisPub.on('error', makeErrorThrottle('pub'));
 
-export const redisSub = new Redis({ ...base, db: 0 });
+export const redisSub = createRedisClient();
 redisSub.on('connect', () => logger.info(`Redis[sub]: connected`));
 redisSub.on('error', makeErrorThrottle('sub'));
 

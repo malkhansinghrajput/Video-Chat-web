@@ -7,8 +7,31 @@
 import { config } from 'dotenv';
 import path from 'path';
 
-// Load .env from project root (backend directory)
-config({ path: path.resolve(__dirname, '../../.env') });
+// ENV_FILE permits an isolated test/staging configuration without ever
+// overwriting the developer or production .env file.
+const envFile = process.env['ENV_FILE'] ?? '.env';
+config({ path: path.resolve(__dirname, `../../${envFile}`) });
+
+// Test commands may keep their credentials under clearly named STAGING_ keys.
+// Map them only in NODE_ENV=test and only when the normal runtime key was not
+// supplied. This keeps production configuration and API behaviour unchanged.
+if (process.env['NODE_ENV'] === 'test') {
+  const stagingAliases: Record<string, string> = {
+    MONGODB_URI: 'STAGING_MONGODB_URI',
+    MONGODB_DB_NAME: 'STAGING_MONGODB_DB_NAME',
+    REDIS_HOST: 'STAGING_REDIS_HOST',
+    REDIS_PORT: 'STAGING_REDIS_PORT',
+    REDIS_USERNAME: 'STAGING_REDIS_USERNAME',
+    REDIS_PASSWORD: 'STAGING_REDIS_PASSWORD',
+    REDIS_URL: 'STAGING_REDIS_URL',
+    REDIS_TLS: 'STAGING_REDIS_TLS',
+  };
+  for (const [runtimeKey, stagingKey] of Object.entries(stagingAliases)) {
+    if (!process.env[runtimeKey] && process.env[stagingKey]) {
+      process.env[runtimeKey] = process.env[stagingKey];
+    }
+  }
+}
 
 function required(key: string): string {
   const val = process.env[key];
