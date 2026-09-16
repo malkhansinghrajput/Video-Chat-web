@@ -270,24 +270,36 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
+        let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
         // Connection state changes
         pc.onconnectionstatechange = () => {
           if (!mounted) return;
           switch (pc.connectionState) {
             case 'connected':
+              if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
               setIsConnecting(false);
               setStatus('connected');
               startTimer();
               startQualityPolling(pc);
               break;
             case 'failed':
+              if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
               setCallError('Connection failed — try skipping to next partner');
               setStatus('idle');
               closePc();
               break;
             case 'disconnected':
-              setStatus('idle');
+              setStatus('reconnecting');
               stopQualityPolling();
+              if (reconnectTimeout) clearTimeout(reconnectTimeout);
+              reconnectTimeout = setTimeout(() => {
+                if (pc.connectionState === 'disconnected') {
+                  setCallError('Connection timed out — skipping to next partner');
+                  setStatus('idle');
+                  closePc();
+                }
+              }, 5000);
               break;
           }
         };
@@ -364,21 +376,43 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
+        const handleRestart = async (data: unknown) => {
+          const payload = data as { roomId: string };
+          if (payload.roomId !== matchInfo!.roomId) return;
+          if (pcRef.current) {
+            try {
+              pcRef.current.restartIce();
+              const offer = await pcRef.current.createOffer({ iceRestart: true });
+              await pcRef.current.setLocalDescription(offer);
+              socket!.emit(SocketEvents.WEBRTC_OFFER, {
+                roomId: matchInfo!.roomId,
+                sdp: offer,
+              });
+            } catch (err) {
+              console.error('[WebRTC] Failed ICE restart:', err);
+            }
+          }
+        };
+
         const handlePeerLeft = () => {
           if (!mounted) return;
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
           closePc();
         };
 
         socket!.on(SocketEvents.WEBRTC_OFFER,         handleOffer);
         socket!.on(SocketEvents.WEBRTC_ANSWER,        handleAnswer);
         socket!.on(SocketEvents.WEBRTC_ICE_CANDIDATE, handleIce);
+        socket!.on(SocketEvents.WEBRTC_RESTART,       handleRestart);
         socket!.on(SocketEvents.PEER_LEFT,            handlePeerLeft);
         socket!.on(SocketEvents.PEER_NEXT,            handlePeerLeft);
 
         return () => {
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
           socket!.off(SocketEvents.WEBRTC_OFFER,         handleOffer);
           socket!.off(SocketEvents.WEBRTC_ANSWER,        handleAnswer);
           socket!.off(SocketEvents.WEBRTC_ICE_CANDIDATE, handleIce);
+          socket!.off(SocketEvents.WEBRTC_RESTART,       handleRestart);
           socket!.off(SocketEvents.PEER_LEFT,            handlePeerLeft);
           socket!.off(SocketEvents.PEER_NEXT,            handlePeerLeft);
         };

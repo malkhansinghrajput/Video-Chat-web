@@ -176,7 +176,8 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
 
       socket.on(SocketEvents.SESSION_ERROR, (data: unknown) => {
         const payload = data as { code: string; message: string };
-        console.warn('[Socket] Session error:', payload);
+        const msg = payload?.message || payload?.code || 'Session error occurred';
+        setSocketError(`Session error: ${msg}`);
       });
 
       // ── WebRTC failure ─────────────────────────────────────────────────

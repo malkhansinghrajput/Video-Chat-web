@@ -5,11 +5,15 @@ import { IconButton } from '@/components/ui/IconButton';
 import { useSession } from '@/hooks/useSession';
 import { useSocket } from '@/hooks/useSocket';
 import { useWebRTC } from '@/hooks/useWebRTC';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useCallStore } from '@/stores/callStore';
 import styles from './ChatRoom.module.css';
 
 export function ChatRoom() {
   const navigate = useNavigate();
+
+  // ── Network status ────────────────────────────────────────────────────────
+  const isOnline = useNetworkStatus();
 
   // ── Session ───────────────────────────────────────────────────────────────
   const { session, status: sessionStatus } = useSession();
@@ -29,6 +33,7 @@ export function ChatRoom() {
   const status = useCallStore((s) => s.status);
   const matchInfo = useCallStore((s) => s.matchInfo);
   const isMicMuted = useCallStore((s) => s.isMicMuted);
+  const isCameraOff = useCallStore((s) => s.isCameraOff);
   const connectionQuality = useCallStore((s) => s.connectionQuality);
   const rtt = useCallStore((s) => s.rtt);
   const messages = useCallStore((s) => s.messages);
@@ -37,6 +42,7 @@ export function ChatRoom() {
   const isPartnerTyping = useCallStore((s) => s.isPartnerTyping);
   const callStartTime = useCallStore((s) => s.callStartTime);
   const toggleMic = useCallStore((s) => s.toggleMic);
+  const toggleCamera = useCallStore((s) => s.toggleCamera);
   const toggleChat = useCallStore((s) => s.toggleChat);
   const addMessage = useCallStore((s) => s.addMessage);
   const markRead = useCallStore((s) => s.markRead);
@@ -51,10 +57,12 @@ export function ChatRoom() {
     callError,
     requestMedia,
     setMicMuted,
+    setCameraOff,
   } = useWebRTC(matchInfo);
 
-  // ── Sync mic toggle to actual media tracks ───────────────────────
+  // ── Sync mic & camera toggles to actual media tracks ───────────────────────
   useEffect(() => { setMicMuted(isMicMuted); }, [isMicMuted, setMicMuted]);
+  useEffect(() => { setCameraOff(isCameraOff); }, [isCameraOff, setCameraOff]);
 
   // ── Touch / Swipe-Up Gesture Handling for Mobile ─────────────────────────
   const touchStartY = useRef<number | null>(null);
@@ -63,13 +71,13 @@ export function ChatRoom() {
   const [swipeFeedback, setSwipeFeedback] = useState(false);
 
   const triggerNextWithFeedback = useCallback(() => {
-    if (!isConnected) return;
+    if (!isConnected || !isOnline) return;
     setSwipeFeedback(true);
     skipPartner();
     setTimeout(() => {
       setSwipeFeedback(false);
     }, 700);
-  }, [isConnected, skipPartner]);
+  }, [isConnected, isOnline, skipPartner]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
@@ -104,21 +112,69 @@ export function ChatRoom() {
     }
   };
 
-  // ── Auto-join queue once connected ────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleSkip = useCallback(() => {
+    if (!isOnline) return;
+    skipPartner();
+  }, [isOnline, skipPartner]);
+
+  // ── Space Key Shortcut to Skip ────────────────────────────────────────────
   useEffect(() => {
-    if (isConnected && status === 'idle') {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        const active = document.activeElement;
+        const tag = active?.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || (active as HTMLElement)?.isContentEditable) {
+          return;
+        }
+        e.preventDefault();
+        handleSkip();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleSkip]);
+
+  // ── Dynamic Local Video Drag Bounds ───────────────────────────────────────
+  const [dragBounds, setDragBounds] = useState({ left: -180, right: 10, top: 0, bottom: 350 });
+
+  useEffect(() => {
+    const updateBounds = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const maxLeft = Math.min(-50, -(w - 140));
+      const maxBottom = Math.min(450, h - 180);
+      setDragBounds({ left: maxLeft, right: 10, top: 0, bottom: maxBottom });
+    };
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+    return () => window.removeEventListener('resize', updateBounds);
+  }, []);
+
+  // ── Auto-join queue once connected (only when online) ─────────────────────
+  useEffect(() => {
+    if (isOnline && isConnected && status === 'idle') {
       joinQueue();
     }
-  }, [isConnected, status, joinQueue]);
+  }, [isOnline, isConnected, status, joinQueue]);
 
   // ── Mark messages as read when chat opened ────────────────────────────────
   useEffect(() => {
     if (isChatOpen) markRead();
   }, [isChatOpen, markRead]);
 
-  // ── Call timer display ────────────────────────────────────────────────────
+  // ── Realtime 1-Second Call Timer Tick ────────────────────────────────────
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!callStartTime) return;
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [callStartTime]);
+
   const callDuration = callStartTime
-    ? Math.floor((Date.now() - callStartTime) / 1000)
+    ? Math.floor((now - callStartTime) / 1000)
     : 0;
 
   // ── Quality dot color ─────────────────────────────────────────────────────
@@ -128,11 +184,6 @@ export function ChatRoom() {
     poor: styles.poor,
     critical: styles.critical,
   }[connectionQuality] ?? styles.good;
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
-  const handleSkip = useCallback(() => {
-    skipPartner();
-  }, [skipPartner]);
 
   const handleLeave = useCallback(() => {
     leaveChat();
@@ -155,7 +206,7 @@ export function ChatRoom() {
   const error = socketError ?? callError;
 
   const isSearching = status === 'searching' || (isConnected && status === 'idle');
-  const isInCall = status === 'matched' || status === 'connected';
+  const isInCall = status === 'matched' || status === 'connected' || status === 'reconnecting';
 
   return (
     <div
@@ -171,21 +222,41 @@ export function ChatRoom() {
         transition={{ delay: 0.5 }}
         className={styles.networkHud}
       >
-        <span className={`${styles.dot} ${isConnected ? qualityClass : styles.critical}`} />
+        <span className={`${styles.dot} ${isConnected && isOnline ? qualityClass : styles.critical}`} />
         <span>
-          {!isConnected
-            ? (isLoading ? 'Connecting...' : 'Disconnected')
-            : isInCall
-              ? `HD • ${rtt > 0 ? `${rtt}ms` : 'live'}`
-              : isSearching
-                ? 'Searching...'
-                : 'Connected'}
+          {!isOnline
+            ? 'Offline'
+            : !isConnected
+              ? (isLoading ? 'Connecting...' : 'Disconnected')
+              : status === 'reconnecting'
+                ? 'Reconnecting...'
+                : isInCall
+                  ? `HD • ${rtt > 0 ? `${rtt}ms` : 'live'}`
+                  : isSearching
+                    ? 'Searching...'
+                    : 'Connected'}
         </span>
       </motion.div>
 
+      {/* Offline Banner */}
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div
+            key="offline-banner"
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className={styles.permissionBanner}
+            style={{ background: '#dc2626' }}
+          >
+            <span>📡 Internet connection lost. Reconnecting when online...</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Mobile Swipe-Up Hint Pill */}
       <AnimatePresence>
-        {isConnected && !isChatOpen && (
+        {isConnected && isOnline && !isChatOpen && (
           <motion.div
             key="swipe-hint"
             initial={{ opacity: 0, y: 15 }}
@@ -199,7 +270,7 @@ export function ChatRoom() {
             >
               👆
             </motion.span>
-            <span>Swipe up for next</span>
+            <span>Swipe up or press Space for next</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -310,7 +381,7 @@ export function ChatRoom() {
                     : 'Finding partner...'}
             </motion.h2>
             <p className={styles.waitText}>
-              {isConnected ? 'Searching globally • Swipe up to skip' : 'Establishing connection...'}
+              {isConnected ? 'Searching globally • Press Space or Swipe up to skip' : 'Establishing connection...'}
             </p>
           </motion.div>
         ) : (
@@ -333,6 +404,11 @@ export function ChatRoom() {
                 <span>Establishing video connection...</span>
               </div>
             )}
+            {status === 'reconnecting' && (
+              <div className={styles.connectingOverlay} style={{ background: 'rgba(220,38,38,0.7)' }}>
+                <span>Reconnecting video stream...</span>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -341,11 +417,11 @@ export function ChatRoom() {
       <motion.div
         className={styles.localVideo}
         drag
-        dragConstraints={{ left: -180, right: 10, top: 0, bottom: 350 }}
+        dragConstraints={dragBounds}
         dragElastic={0.1}
         whileDrag={{ scale: 1.05 }}
       >
-        {localStream ? (
+        {localStream && !isCameraOff ? (
           <video
             ref={localVideoRef}
             autoPlay
@@ -360,8 +436,9 @@ export function ChatRoom() {
             borderRadius: 'inherit',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '1.8rem',
+            color: '#888'
           }}>
-            👤
+            {isCameraOff ? '📷❌' : '👤'}
           </div>
         )}
       </motion.div>
@@ -394,12 +471,17 @@ export function ChatRoom() {
           onClick={toggleMic}
         />
         <IconButton
+          icon={isCameraOff ? '📷' : '🎥'}
+          tooltip={isCameraOff ? 'Turn Camera On' : 'Turn Camera Off'}
+          onClick={toggleCamera}
+        />
+        <IconButton
           icon="⏭"
           size="lg"
           variant="filled"
           tooltip="Next (Space or Swipe Up)"
           onClick={handleSkip}
-          disabled={!isConnected}
+          disabled={!isConnected || !isOnline}
         />
         <IconButton
           icon="💬"
@@ -446,7 +528,7 @@ export function ChatRoom() {
                 <div className={styles.typingIndicator}>Partner is typing...</div>
               )}
             </div>
-            <ChatInput onSend={handleSendMessage} disabled={!isInCall} />
+            <ChatInput onSend={handleSendMessage} disabled={!isInCall || !isOnline} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -486,3 +568,4 @@ function ChatInput({
     </form>
   );
 }
+
