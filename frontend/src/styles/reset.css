@@ -114,11 +114,6 @@ h6 {
   overflow-wrap: break-word;
 }
 
-/* Remove default focus outline — we use custom */
-:focus {
-  outline: none;
-}
-
 
 /* Disable touch callout and selection on interactive elements */
 button,

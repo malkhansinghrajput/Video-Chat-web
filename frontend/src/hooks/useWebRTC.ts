@@ -37,6 +37,11 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.services.mozilla.com' },
   { urls: 'stun:global.stun.twilio.com:3478' },
   {
+    /*
+     * OpenRelay public TURN server — suitable for development/testing ONLY.
+     * For production: replace with a private TURN server (coturn, Twilio, Metered, etc.)
+     * for reliability, privacy, and to avoid rate limits on the public relay.
+     */
     urls: [
       'turn:openrelay.metered.ca:80',
       'turn:openrelay.metered.ca:443',

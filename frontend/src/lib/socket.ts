@@ -79,6 +79,7 @@ export function disconnectSocket(): void {
 export const SocketEvents = {
   // Client → Server
   JOIN_QUEUE:           'join_queue',
+  /** Backend contract event — not emitted by this client (CHAT_NEXT/CHAT_LEAVE are used instead) */
   LEAVE_QUEUE:          'leave_queue',
   CHAT_MESSAGE:         'chat:message',
   CHAT_NEXT:            'chat:next',
@@ -93,6 +94,7 @@ export const SocketEvents = {
   QUEUE_JOINED:         'queue:joined',
   QUEUE_POSITION:       'queue:position',
   MATCH_FOUND:          'match:found',
+  /** Backend may emit this when peer connects — not currently consumed, kept for contract completeness */
   PEER_JOINED:          'peer:joined',
   PEER_LEFT:            'peer:left',
   PEER_NEXT:            'peer:next',

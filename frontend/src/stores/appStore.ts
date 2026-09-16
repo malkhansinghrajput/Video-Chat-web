@@ -19,10 +19,6 @@ interface AppState {
   /* Online Users */
   onlineCount: number;
   setOnlineCount: (count: number) => void;
-
-  /* Network */
-  isOnline: boolean;
-  setOnline: (online: boolean) => void;
 }
 
 const getStoredTheme = (): Theme => {
@@ -95,7 +91,4 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   onlineCount: 0,
   setOnlineCount: (count) => set({ onlineCount: count }),
-
-  isOnline: navigator.onLine,
-  setOnline: (online) => set({ isOnline: online }),
 }));

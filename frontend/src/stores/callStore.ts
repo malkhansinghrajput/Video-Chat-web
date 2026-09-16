@@ -23,10 +23,8 @@ interface CallState {
   /* Media State */
   isMicMuted: boolean;
   isCameraOff: boolean;
-  isScreenSharing: boolean;
   toggleMic: () => void;
   toggleCamera: () => void;
-  toggleScreenShare: () => void;
 
   /* Partner State */
   partnerStatus: PartnerStatus;
@@ -43,10 +41,6 @@ interface CallState {
   startTimer: () => void;
   stopTimer: () => void;
 
-  /* Search */
-  searchStartTime: number | null;
-  startSearch: () => void;
-  stopSearch: () => void;
 
   /* Chat */
   isChatOpen: boolean;
@@ -82,10 +76,8 @@ export const useCallStore = create<CallState>((set, get) => ({
 
   isMicMuted: false,
   isCameraOff: false,
-  isScreenSharing: false,
   toggleMic: () => set((s) => ({ isMicMuted: !s.isMicMuted })),
   toggleCamera: () => set((s) => ({ isCameraOff: !s.isCameraOff })),
-  toggleScreenShare: () => set((s) => ({ isScreenSharing: !s.isScreenSharing })),
 
   partnerStatus: null,
   setPartnerStatus: (partnerStatus) => set({ partnerStatus }),
@@ -100,9 +92,6 @@ export const useCallStore = create<CallState>((set, get) => ({
   startTimer: () => set({ callStartTime: Date.now() }),
   stopTimer: () => set({ callStartTime: null }),
 
-  searchStartTime: null,
-  startSearch: () => set({ searchStartTime: Date.now(), status: 'searching' }),
-  stopSearch: () => set({ searchStartTime: null }),
 
   isChatOpen: false,
   messages: [],
@@ -141,13 +130,11 @@ export const useCallStore = create<CallState>((set, get) => ({
       status: 'idle',
       isMicMuted: false,
       isCameraOff: false,
-      isScreenSharing: false,
       partnerStatus: null,
       connectionQuality: 'excellent',
       rtt: 0,
       packetLoss: 0,
       callStartTime: null,
-      searchStartTime: null,
       isChatOpen: false,
       messages: [],
       unreadCount: 0,

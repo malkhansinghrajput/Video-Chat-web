@@ -1,4 +1,5 @@
-import { Component, ErrorInfo, ReactNode } from 'react';
+import { Component } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children: ReactNode;
@@ -30,7 +31,10 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div style={{
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{
           height: '100dvh',
           display: 'flex',
           flexDirection: 'column',
@@ -49,6 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
             An unexpected error occurred. Please try reloading the application.
           </p>
           <button
+            id="error-reload-btn"
             onClick={this.handleReload}
             style={{
               padding: '10px 20px',

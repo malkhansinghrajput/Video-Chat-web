@@ -118,7 +118,15 @@ export const api = {
     return request<IceServersResponse>('GET', '/session/iceservers', undefined, true);
   },
 
-  /** Get live analytics (online count) — hits /health/analytics/live */
+  /**
+   * Get live analytics (online count) — hits /health/analytics/live
+   *
+   * NOTE: This uses a hardcoded relative path that assumes:
+   *   - Dev: Vite proxy routes /health → http://localhost:3001
+   *   - Prod: Same-origin deployment (frontend and backend on same domain)
+   * If the deployment splits frontend/backend onto different origins,
+   * this URL will need to be updated or proxied.
+   */
   getAnalytics(): Promise<OnlineCountResponse> {
     return fetch('/health/analytics/live')
       .then((r) => r.json()) as Promise<OnlineCountResponse>;

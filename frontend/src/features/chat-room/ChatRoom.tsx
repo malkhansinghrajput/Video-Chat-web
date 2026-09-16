@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { IconButton } from '@/components/ui/IconButton';
@@ -7,6 +7,7 @@ import { useSocket } from '@/hooks/useSocket';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useCallStore } from '@/stores/callStore';
+import { generateId } from '@/utils/generateId';
 import styles from './ChatRoom.module.css';
 
 export function ChatRoom() {
@@ -79,7 +80,7 @@ export function ChatRoom() {
     }, 700);
   }, [isConnected, isOnline, skipPartner]);
 
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
     // Don't trigger swipe inside chat drawer, buttons, or inputs
     if (
@@ -92,9 +93,9 @@ export function ChatRoom() {
     touchStartY.current = e.touches[0].clientY;
     touchStartX.current = e.touches[0].clientX;
     touchStartTime.current = Date.now();
-  };
+  }, []);
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     if (touchStartY.current === null || touchStartX.current === null) return;
 
     const endY = e.changedTouches[0].clientY;
@@ -110,7 +111,7 @@ export function ChatRoom() {
     if (deltaY > 50 && deltaY > deltaX * 1.1 && deltaTime < 600) {
       triggerNextWithFeedback();
     }
-  };
+  }, [triggerNextWithFeedback]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleSkip = useCallback(() => {
@@ -177,13 +178,13 @@ export function ChatRoom() {
     ? Math.floor((now - callStartTime) / 1000)
     : 0;
 
-  // ── Quality dot color ─────────────────────────────────────────────────────
-  const qualityClass = {
+  // ── Quality dot color (memoized — only changes when connectionQuality changes) ─
+  const qualityClass = useMemo(() => ({
     excellent: styles.good,
     good: styles.good,
     poor: styles.poor,
     critical: styles.critical,
-  }[connectionQuality] ?? styles.good;
+  }[connectionQuality] ?? styles.good), [connectionQuality]);
 
   const handleLeave = useCallback(() => {
     leaveChat();
@@ -194,7 +195,7 @@ export function ChatRoom() {
     if (!text.trim()) return;
     sendMessage(text);
     addMessage({
-      id: `me-${Date.now()}`,
+      id: generateId(),
       sender: 'me',
       text: text.trim(),
       timestamp: Date.now(),
@@ -396,6 +397,7 @@ export function ChatRoom() {
               ref={remoteVideoRef}
               autoPlay
               playsInline
+              aria-label="Remote partner video"
               className={styles.remoteVideoEl}
               style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#111' }}
             />
@@ -468,11 +470,13 @@ export function ChatRoom() {
         <IconButton
           icon={isMicMuted ? '🔇' : '🎤'}
           tooltip={isMicMuted ? 'Unmute Mic' : 'Mute Mic'}
+          aria-pressed={isMicMuted}
           onClick={toggleMic}
         />
         <IconButton
           icon={isCameraOff ? '📷' : '🎥'}
           tooltip={isCameraOff ? 'Turn Camera On' : 'Turn Camera Off'}
+          aria-pressed={isCameraOff}
           onClick={toggleCamera}
         />
         <IconButton
@@ -507,10 +511,17 @@ export function ChatRoom() {
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 25 }}
             className={styles.chatPanel}
+            role="dialog"
+            aria-label="Chat panel"
+            aria-modal="false"
           >
             <div className={styles.chatHeader}>
               <span>Chat</span>
-              <button onClick={toggleChat} className={styles.chatClose}>✕</button>
+              <button
+                onClick={toggleChat}
+                className={styles.chatClose}
+                aria-label="Close chat"
+              >✕</button>
             </div>
             <div className={styles.chatMessages}>
               {messages.length === 0 && (
@@ -560,11 +571,12 @@ function ChatInput({
         name="msg"
         className={styles.chatInput}
         placeholder={disabled ? 'Waiting for partner...' : 'Type a message...'}
+        aria-label="Type a chat message"
         disabled={disabled}
         maxLength={500}
         autoComplete="off"
       />
-      <button type="submit" className={styles.chatSend} disabled={disabled}>➤</button>
+      <button type="submit" className={styles.chatSend} disabled={disabled} aria-label="Send message">➤</button>
     </form>
   );
 }

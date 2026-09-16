@@ -333,7 +333,7 @@
 .chatInput {
   flex: 1;
   background: var(--surface-3);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border);
   border-radius: var(--radius-full);
   padding: var(--space-2) var(--space-4);
   color: var(--text-primary);
@@ -365,6 +365,8 @@
 
 /* ─── Mobile Swipe-Up Hint ─── */
 .swipeHint {
+  /* Desktop: hidden — keyboard shortcut hint in waitText is sufficient */
+  display: none;
   position: absolute;
   bottom: calc(92px + env(safe-area-inset-bottom, 0px));
   left: 0;
@@ -374,7 +376,6 @@
   width: fit-content;
   max-width: calc(100% - 32px);
   z-index: 22;
-  display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 6px 16px;
@@ -478,5 +479,10 @@
     max-width: 90%;
     font-size: 12px;
     padding: 6px 12px;
+  }
+
+  /* Show swipe hint only on mobile */
+  .swipeHint {
+    display: flex;
   }
 }

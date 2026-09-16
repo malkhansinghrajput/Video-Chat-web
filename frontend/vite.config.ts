@@ -1,9 +1,9 @@
-import { defineConfig } from 'vite'
+import { defineConfig, mergeConfig } from 'vite'
+import { defineConfig as defineTestConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-// https://vite.dev/config/
-export default defineConfig({
+const viteConfig = defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
@@ -33,3 +33,15 @@ export default defineConfig({
     },
   },
 })
+
+const testConfig = defineTestConfig({
+  test: {
+    // Use jsdom so all tests have DOM APIs (sessionStorage, localStorage, window, document)
+    environment: 'jsdom',
+    globals: true,
+    // vmThreads keeps jsdom created once per worker (better performance)
+    pool: 'vmThreads',
+  },
+})
+
+export default mergeConfig(viteConfig, testConfig)
