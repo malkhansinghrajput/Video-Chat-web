@@ -112,7 +112,8 @@
   font-size: var(--text-body-sm);
   color: #fff;
   font-weight: var(--weight-medium);
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
 }
 
 /* ─── Permission Banner ─── */
@@ -136,7 +137,8 @@
   font-size: var(--text-body-sm);
   color: #fff;
   font-weight: var(--weight-medium);
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
