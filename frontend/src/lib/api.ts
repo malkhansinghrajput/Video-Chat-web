@@ -3,7 +3,20 @@
  * Base URL is proxied via Vite in dev, same-origin in prod
  */
 
-const BASE = import.meta.env.VITE_API_URL ?? '/api/v1';
+// Safety guard: if VITE_API_URL is set to a localhost/127.0.0.1 address
+// but the page is served from a real (non-localhost) host, fall back to the
+// same-origin relative path. This prevents a dev .env from breaking production.
+const _configuredApiUrl = import.meta.env.VITE_API_URL;
+const _isApiUrlLocalhost =
+  _configuredApiUrl &&
+  (_configuredApiUrl.includes('localhost') || _configuredApiUrl.includes('127.0.0.1'));
+const _isPageLocalhost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const BASE: string =
+  _configuredApiUrl && !(_isApiUrlLocalhost && !_isPageLocalhost)
+    ? _configuredApiUrl
+    : '/api/v1';
 
 function getToken(): string | null {
   return sessionStorage.getItem('vc_token');
