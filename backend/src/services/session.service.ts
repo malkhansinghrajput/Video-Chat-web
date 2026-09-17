@@ -1,3 +1,4 @@
+﻿import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { redisSessions, redisAnalytics } from '../config/redis';
 import { Session } from '../models/session.model';
@@ -14,10 +15,10 @@ import { RedisKeys } from '../constants';
 import { env } from '../config/env';
 import type { AnonymousSession, TurnCredentials } from '../types';
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Session Service
 // Manages anonymous session lifecycle
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export class SessionService {
   /**
@@ -48,13 +49,18 @@ export class SessionService {
       isBanned: false,
     };
 
-    // Store in Redis with TTL
+    // Store in Redis with TTL.
+    // We store the token in the session hash so destroySession() can clean
+    // up the token -> sessionId mapping without needing the token as a param.
     const key = RedisKeys.session.data(sessionId);
+    const sessionFlat = this.flattenSession(session);
+    sessionFlat['token'] = token; // stored for cleanup on destroy
+
     const transaction = redisSessions.multi();
-    transaction.hset(key, this.flattenSession(session));
+    transaction.hset(key, sessionFlat);
     transaction.expire(key, env.SESSION_TTL_SECONDS);
 
-    // Store token → sessionId mapping
+    // Store token -> sessionId mapping
     const tokenKey = RedisKeys.session.token(token);
     transaction.setex(tokenKey, env.SESSION_TTL_SECONDS, sessionId);
     transaction.incr(RedisKeys.analytics.concurrentUsers());
@@ -69,8 +75,6 @@ export class SessionService {
       language: params.language,
       interests: session.interests,
     }).catch((err) => logError('SessionService: failed to persist session', err));
-
-    // Track concurrent users
 
     logger.debug('SessionService: session created', { sessionId, country: params.country });
     return { sessionId, token };
@@ -137,7 +141,6 @@ export class SessionService {
     }
 
     // Slow path: check MongoDB, but only if connected (graceful fallback for dev)
-    const mongoose = require('mongoose');
     if (mongoose.connection.readyState === 1) {
       const now = new Date();
       const activeBan = await Ban.findOne({
@@ -166,12 +169,32 @@ export class SessionService {
   }
 
   /**
-   * Destroy a session (on leave or timeout).
+   * Destroy a session permanently (on leave or grace-period expiry).
+   * Removes the session hash, the token -> sessionId mapping, and
+   * decrements the concurrent-user counter (floored at 0 to prevent drift).
    */
   async destroySession(sessionId: string): Promise<void> {
     const key = RedisKeys.session.data(sessionId);
-    await redisSessions.del(key);
-    await redisAnalytics.decr(RedisKeys.analytics.concurrentUsers());
+
+    // Retrieve stored token before deletion so we can clean up the mapping.
+    const storedToken = await redisSessions.hget(key, 'token');
+
+    const transaction = redisSessions.multi();
+    transaction.del(key);
+    if (storedToken) {
+      transaction.del(RedisKeys.session.token(storedToken));
+    }
+    await transaction.exec();
+
+    // Decrement concurrent users - floor at 0 using Lua to prevent drift.
+    await redisAnalytics.eval(
+      `local v = redis.call('DECR', KEYS[1])
+       if v < 0 then redis.call('SET', KEYS[1], '0') end
+       return v`,
+      1,
+      RedisKeys.analytics.concurrentUsers(),
+    );
+
     logger.debug('SessionService: session destroyed', { sessionId });
   }
 
@@ -190,7 +213,7 @@ export class SessionService {
     return generateTurnCredentials(sessionId);
   }
 
-  // ── Helpers ────────────────────────────────
+  // Helpers
 
   private flattenSession(session: Partial<AnonymousSession>): Record<string, string> {
     const flat: Record<string, string> = {};

@@ -1,9 +1,9 @@
-import type { Server, Socket } from 'socket.io';
+﻿import type { Server, Socket } from 'socket.io';
 import { sessionService } from '../services/session.service';
 import { queueService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
 import { SocketEvents, RedisKeys, ErrorCodes, Limits } from '../constants';
-import { redisPresence, redisRateLimit, subscribeToChannel } from '../config/redis';
+import { redisPresence, subscribeToChannel } from '../config/redis';
 import { env } from '../config/env';
 import type { SocketData } from '../types';
 import { handleQueueEvents } from './queue.handler';
@@ -13,10 +13,22 @@ import { handleReportEvents } from './report.handler';
 
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 
-// ─────────────────────────────────────────────
+/**
+ * Clear all pending disconnect timers.
+ * Called during graceful shutdown so no timer fires after the server stops.
+ */
+export function clearAllDisconnectTimers(): void {
+  for (const timer of disconnectTimers.values()) {
+    clearTimeout(timer);
+  }
+  disconnectTimers.clear();
+  logger.info('Socket: all disconnect timers cleared');
+}
+
+// _____________________________________________
 // Connection Handler
 // Entry point for all socket connections
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export function registerConnectionHandlers(io: Server): void {
   // Subscribe to Redis Pub/Sub match events with automatic retry on failure (e.g. OOM)
@@ -48,8 +60,8 @@ export function registerConnectionHandlers(io: Server): void {
       // Join personal room for direct messages
       await socket.join(`session:${sessionId}`);
 
-      // ── Reconnect recovery: restore active room if session was in one ──
-      // This allows calls to survive brief internet drops
+      // Reconnect recovery: restore active room if session was in one.
+      // This allows calls to survive brief internet drops.
       try {
         const session = await sessionService.getSession(sessionId);
         if (session?.roomId && (session.status === 'matched' || session.status === 'connected')) {
@@ -86,10 +98,10 @@ export function registerConnectionHandlers(io: Server): void {
   });
 }
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Heartbeat Handler
 // Tracks last heartbeat timestamp for miss detection
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 function handleHeartbeat(socket: Socket): void {
   const data = socket.data as SocketData;
@@ -120,9 +132,9 @@ function handleHeartbeat(socket: Socket): void {
   });
 }
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Disconnect Handler
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 async function handleDisconnect(socket: Socket, io: Server, reason: string): Promise<void> {
   const data = socket.data as SocketData;
@@ -143,7 +155,8 @@ async function handleDisconnect(socket: Socket, io: Server, reason: string): Pro
       await queueService.dequeue(sessionId, socket.id);
     }
 
-    // If in a room, notify peer after grace period
+    // If in a room, notify peer after grace period (supports reconnect).
+    // The timer is stored so it can be cancelled if the client reconnects.
     if (session.roomId && (session.status === 'matched' || session.status === 'connected')) {
       const timer = setTimeout(() => {
         void finalizeDisconnect(socket, io, sessionId, session.peerSocketId, session.roomId!);
@@ -164,22 +177,28 @@ async function finalizeDisconnect(
 ): Promise<void> {
   try {
     disconnectTimers.delete(sessionId);
-        // Check if reconnected within grace period
+
+    // Check if the client reconnected within the grace period.
+    // If so, the new socket will have a different ID — abort final cleanup.
     const current = await sessionService.getSession(sessionId);
     if (!current || current.socketId !== socket.id) return;
 
+    // Notify the peer that the session is gone.
     if (peerSocketId) io.to(peerSocketId).emit(SocketEvents.PEER_LEFT, { reason: 'disconnect' });
 
-    await sessionService.updateSession(sessionId, { status: 'idle', roomId: undefined, peerId: undefined, peerSocketId: undefined } as Partial<SocketData>);
+    // Permanently destroy the session (removes Redis hash + token mapping).
+    await sessionService.destroySession(sessionId);
+
+    logger.info('Socket: session permanently destroyed after grace period', { sessionId, roomId });
   } catch (err) {
     logError('Socket: error finalizing disconnect', err, { sessionId });
   }
 }
 
-// ─────────────────────────────────────────────
-// Match Event Relay (Redis Pub/Sub → Socket.IO)
+// _____________________________________________
+// Match Event Relay (Redis Pub/Sub -> Socket.IO)
 // Uses subscribeToChannel for automatic retry on OOM/failure
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 function setupMatchEventRelay(io: Server): void {
   subscribeToChannel(
@@ -219,17 +238,17 @@ function setupMatchEventRelay(io: Server): void {
         io.in(`session:${initiator.sessionId}`).socketsJoin(`room:${roomId}`);
         io.in(`session:${responder.sessionId}`).socketsJoin(`room:${roomId}`);
         for (const socketId of io.sockets.adapter.rooms.get(`session:${initiator.sessionId}`) ?? []) {
-          const socket = io.sockets.sockets.get(socketId);
-          if (socket) {
-            (socket.data as SocketData).activeRoomId = roomId;
-            (socket.data as SocketData).peerSocketId = responder.socketId;
+          const s = io.sockets.sockets.get(socketId);
+          if (s) {
+            (s.data as SocketData).activeRoomId = roomId;
+            (s.data as SocketData).peerSocketId = responder.socketId;
           }
         }
         for (const socketId of io.sockets.adapter.rooms.get(`session:${responder.sessionId}`) ?? []) {
-          const socket = io.sockets.sockets.get(socketId);
-          if (socket) {
-            (socket.data as SocketData).activeRoomId = roomId;
-            (socket.data as SocketData).peerSocketId = initiator.socketId;
+          const s = io.sockets.sockets.get(socketId);
+          if (s) {
+            (s.data as SocketData).activeRoomId = roomId;
+            (s.data as SocketData).peerSocketId = initiator.socketId;
           }
         }
 
@@ -240,4 +259,3 @@ function setupMatchEventRelay(io: Server): void {
     },
   );
 }
-

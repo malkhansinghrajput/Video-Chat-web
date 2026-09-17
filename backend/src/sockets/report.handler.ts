@@ -1,4 +1,4 @@
-import type { Server, Socket } from 'socket.io';
+﻿import type { Server, Socket } from 'socket.io';
 import { sessionService } from '../services/session.service';
 import { moderationService } from '../services/moderation.service';
 import { logger, logError } from '../config/logger';
@@ -6,9 +6,9 @@ import { SocketEvents, ErrorCodes } from '../constants';
 import type { SocketData, ReportPayload } from '../types';
 import { hashSensitiveData } from '../utils/token.util';
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Report Event Handlers
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export function handleReportEvents(socket: Socket, _io: Server): void {
   const data = socket.data as SocketData;
@@ -63,8 +63,9 @@ export function handleReportEvents(socket: Socket, _io: Server): void {
         });
       }
 
-      // Acknowledge to reporter (don't leak auto-ban info)
-      socket.emit('report:submitted', { reportId });
+      // Acknowledge to reporter using the typed constant (not a raw string).
+      // Do not leak auto-ban status.
+      socket.emit(SocketEvents.REPORT_SUBMITTED, { reportId });
 
       logger.info('ReportHandler: report submitted', {
         reportId,
@@ -88,3 +89,7 @@ export function handleReportEvents(socket: Socket, _io: Server): void {
     }
   });
 }
+
+// Suppress unused-import warning: hashSensitiveData is imported for potential
+// future use in report fingerprinting; keep the import to avoid removing it.
+void hashSensitiveData;

@@ -4,12 +4,9 @@ import { getRedisHealth } from '../config/redis';
 import { queueService, matchingEngine } from '../services/matching.service';
 import { redisAnalytics } from '../config/redis';
 import { RedisKeys } from '../constants';
+import { env } from '../config/env';
 
-// ─────────────────────────────────────────────
-// Health & Analytics Controllers
-// ─────────────────────────────────────────────
-
-/** Safe Redis get — returns '0' if Redis OOM or unavailable */
+/** Safe Redis get - returns '0' if Redis OOM or unavailable */
 async function safeRedisGet(key: string): Promise<string> {
   try {
     return (await redisAnalytics.get(key)) ?? '0';
@@ -21,7 +18,7 @@ async function safeRedisGet(key: string): Promise<string> {
 export class HealthController {
   /**
    * GET /health
-   * Basic health check — always responds if the server is alive.
+   * Basic health check - always responds if the server is alive.
    */
   basic(_req: Request, res: Response): void {
     res.json({ status: 'ok', timestamp: Date.now() });
@@ -29,7 +26,7 @@ export class HealthController {
 
   /**
    * GET /health/live
-   * Kubernetes liveness probe — server is running.
+   * Kubernetes liveness probe - server is running.
    */
   liveness(_req: Request, res: Response): void {
     res.status(200).json({ alive: true });
@@ -37,7 +34,7 @@ export class HealthController {
 
   /**
    * GET /health/ready
-   * Kubernetes readiness probe — all dependencies are connected.
+   * Kubernetes readiness probe - all dependencies are connected.
    */
   async readiness(_req: Request, res: Response): Promise<void> {
     const [dbHealth, redisHealth] = await Promise.all([
@@ -61,7 +58,8 @@ export class HealthController {
 
   /**
    * GET /health/detailed
-   * Full diagnostic info for internal monitoring.
+   * Full diagnostic info for internal monitoring. Protected by adminAuthMiddleware in routes.
+   * Does not expose CPU usage or raw memory details to avoid information leakage.
    */
   async detailed(_req: Request, res: Response): Promise<void> {
     const [dbHealth, redisHealth, queueDepth] = await Promise.all([
@@ -98,11 +96,11 @@ export class HealthController {
       service: 'video-chat-backend',
       version: process.env['npm_package_version'] ?? '1.0.0',
       uptime: process.uptime(),
-      region: process.env['REGION'] ?? 'default',
+      region: env.REGION,
       timestamp: Date.now(),
       checks: {
         mongodb: dbHealth,
-        redis: { ...redisHealth },
+        redis: { status: redisHealth.status, latencyMs: redisHealth.latencyMs },
         matchingEngine: isMatchingEngineHealthy ? 'running' : 'stopped',
       },
       stats: {
@@ -113,8 +111,6 @@ export class HealthController {
         skipCount: skipCountNum,
         skipRate: `${skipRate}%`,
         avgQueueWaitMs: parseInt(avgQueueWaitRaw, 10),
-        memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-        cpuUsage: process.cpuUsage(),
       },
     });
   }
@@ -122,7 +118,28 @@ export class HealthController {
 
 export class AnalyticsController {
   /**
-   * GET /api/v1/analytics/live
+   * GET /health/analytics/count
+   * Public — returns only safe public stats (online count, queue depth).
+   * No internal metrics exposed.
+   */
+  async getPublicCount(_req: Request, res: Response): Promise<void> {
+    const [concurrentUsersRaw, queueDepth] = await Promise.all([
+      safeRedisGet(RedisKeys.analytics.concurrentUsers()),
+      queueService.getQueueDepth().catch(() => 0),
+    ]);
+
+    res.json({
+      success: true,
+      concurrentUsers: parseInt(concurrentUsersRaw, 10) || 0,
+      usersInQueue:    queueDepth,
+      timestamp:       Date.now(),
+    });
+  }
+
+  /**
+   * GET /health/analytics/live
+   * Protected by adminAuthMiddleware in routes.
+   * Returns live platform statistics. Timestamp is at the root only.
    */
   async getLiveStats(_req: Request, res: Response): Promise<void> {
     const [
@@ -157,7 +174,6 @@ export class AnalyticsController {
         skipCount,
         skipRate:         `${skipRate}%`,
         avgQueueWaitMs:   parseInt(avgQueueWaitRaw, 10),
-        timestamp:        Date.now(),
       },
       timestamp: Date.now(),
     });
@@ -166,4 +182,3 @@ export class AnalyticsController {
 
 export const healthController  = new HealthController();
 export const analyticsController = new AnalyticsController();
-

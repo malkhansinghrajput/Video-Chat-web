@@ -1,24 +1,24 @@
-import { createServer } from 'http';
+﻿import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
 import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/database';
 import { connectRedis, disconnectRedis } from './config/redis';
 import { matchingEngine } from './services/matching.service';
-import { registerConnectionHandlers } from './sockets/connection.handler';
+import { registerConnectionHandlers, clearAllDisconnectTimers } from './sockets/connection.handler';
 import { socketAuthMiddleware } from './middlewares/auth.middleware';
 import { logger } from './config/logger';
 import { env } from './config/env';
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Bootstrap Function
 // Wires up all services and starts listening
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 async function bootstrap(): Promise<void> {
   const startTime = Date.now();
-  logger.info('🚀 Starting Video Chat Backend...', { env: env.NODE_ENV, port: env.PORT });
+  logger.info('Starting Video Chat Backend...', { env: env.NODE_ENV, port: env.PORT });
 
-  // ── Connect Dependencies ──────────────────
+  // Connect Dependencies
   try {
     await connectRedis();
   } catch (err) {
@@ -34,14 +34,20 @@ async function bootstrap(): Promise<void> {
     process.exit(1);
   }
 
-  // ── HTTP Server ───────────────────────────
+  // HTTP Server
   const app = createApp();
   const httpServer = createServer(app);
 
-  // ── Socket.IO Server ──────────────────────
+  // Build the allowed origins list.
+  // Filter '*' from Socket.IO origins when credentials are enabled — browsers
+  // reject credentialed requests to wildcard origins (CORS spec).
+  const corsOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
+  const socketCorsOrigins = corsOrigins.filter((o) => o !== '*');
+
+  // Socket.IO Server
   const io = new SocketServer(httpServer, {
     cors: {
-      origin: env.CORS_ORIGIN.split(',').map((o) => o.trim()),
+      origin: socketCorsOrigins.length > 0 ? socketCorsOrigins : corsOrigins,
       credentials: true,
     },
     transports: ['websocket', 'polling'],
@@ -57,17 +63,17 @@ async function bootstrap(): Promise<void> {
   // Register all socket event handlers
   registerConnectionHandlers(io);
 
-  // ── Start Matching Engine ─────────────────
+  // Start Matching Engine
   matchingEngine.start();
 
-  // ── Listen ───────────────────────────────
+  // Listen
   httpServer.listen(env.PORT, () => {
     const duration = Date.now() - startTime;
     const memory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     
     logger.info(`\n` +
       `=========================================\n` +
-      `✅ SYSTEM READY [${env.NODE_ENV.toUpperCase()}]\n` +
+      `SYSTEM READY [${env.NODE_ENV.toUpperCase()}]\n` +
       `=========================================\n` +
       `  Port:       ${env.PORT}\n` +
       `  Node:       ${process.version}\n` +
@@ -80,34 +86,37 @@ async function bootstrap(): Promise<void> {
     );
   });
 
-  // ── Graceful Shutdown ─────────────────────
+  // Graceful Shutdown
   let isShuttingDown = false;
   const shutdown = async (signal: string) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
     
-    logger.info(`Received ${signal} — shutting down gracefully...`);
+    logger.info(`Received ${signal} - shutting down gracefully...`);
 
     // 1. Stop Matching Engine
     matchingEngine.stop();
 
-    // 2. Stop accepting new requests
+    // 2. Clear all pending disconnect timers so none fire after shutdown
+    clearAllDisconnectTimers();
+
+    // 3. Stop accepting new requests
     httpServer.close(async (err) => {
       if (err) logger.error('Error closing HTTP server', { error: err.message });
       else logger.info('HTTP server closed');
       
       try {
-        // 3. Disconnect existing sockets
+        // 4. Disconnect existing sockets
         io.disconnectSockets(true);
         logger.info('Socket.IO clients disconnected');
         
-        // 4. Close DBs
+        // 5. Close DBs
         await Promise.all([disconnectDatabase(), disconnectRedis()]);
         
-        logger.info('All connections closed. Goodbye! 👋');
+        logger.info('All connections closed. Goodbye!');
         process.exit(0);
-      } catch (err) {
-        logger.error('Error during shutdown', { error: String(err) });
+      } catch (shutdownErr) {
+        logger.error('Error during shutdown', { error: String(shutdownErr) });
         process.exit(1);
       }
     });

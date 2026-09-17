@@ -1,5 +1,9 @@
 version: '3.9'
 
+# Development Docker Compose
+# For production use: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# WARNING: This file is for local development only. Do not deploy directly to production.
+
 services:
   # ─────────────────────────────────────────────
   # Redis — Central State Store
@@ -64,13 +68,14 @@ services:
       PORT: 3001
       SERVICE_NAME: api
       LOG_LEVEL: debug
-      SESSION_HMAC_SECRET: dev-secret-change-in-production-12345
+      SESSION_HMAC_SECRET: ${SESSION_HMAC_SECRET:-dev-secret-change-in-production-12345}
       CORS_ORIGIN: http://localhost:5173,http://localhost:3000
       MONGODB_URI: mongodb://mongodb:27017/videochat_dev
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TURN_SERVER_URLS: turn:localhost:3478
-      TURN_SERVER_SECRET: dev-turn-secret
+      TURN_SERVER_SECRET: ${TURN_SERVER_SECRET:-dev-turn-secret}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-development-admin-token}
       HEARTBEAT_INTERVAL_MS: 25000
       RECONNECT_GRACE_PERIOD_MS: 5000
     depends_on:

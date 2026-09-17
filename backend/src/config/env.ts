@@ -33,6 +33,23 @@ if (process.env['NODE_ENV'] === 'test') {
   }
 }
 
+// ─────────────────────────────────────────────
+// Known development placeholder secrets.
+// These values MUST NOT be used in production.
+// ─────────────────────────────────────────────
+const KNOWN_DEV_SECRETS = new Set([
+  'change-me-in-production-minimum-32-chars!!',
+  'change-me-in-development-minimum-32-chars!!',
+  'dev-secret-change-in-production-12345',
+  'change-me-turn-shared-secret',
+  'dev-turn-secret',
+  'development-admin-token',
+  'your-secret-here',
+  'secret',
+  'password',
+  'changeme',
+]);
+
 function required(key: string): string {
   const val = process.env[key];
   if (!val) {
@@ -58,13 +75,64 @@ function optionalBool(key: string, fallback: boolean): boolean {
   return val.toLowerCase() === 'true' || val === '1';
 }
 
-function secret(key: string, developmentFallback: string): string {
+/**
+ * Production-safe secret loader.
+ *
+ * In production:
+ *   - The variable MUST be present.
+ *   - The value MUST be at least `minLength` characters (default 32).
+ *   - The value MUST NOT match any known development placeholder.
+ *
+ * In development/test:
+ *   - Falls back to `developmentFallback` if the variable is absent.
+ *   - No length or content enforcement.
+ */
+function secret(key: string, developmentFallback: string, minLength = 32): string {
   const value = process.env[key];
-  if (value) return value;
-  if (process.env['NODE_ENV'] === 'production') {
-    throw new Error(`Missing required environment variable in production: ${key}`);
+  const isProduction = process.env['NODE_ENV'] === 'production';
+
+  if (isProduction) {
+    if (!value) {
+      throw new Error(
+        `[SECURITY] Missing required secret in production: ${key}. ` +
+        `Set this environment variable before starting the server.`
+      );
+    }
+    if (value.length < minLength) {
+      throw new Error(
+        `[SECURITY] ${key} is too short in production (${value.length} chars). ` +
+        `Minimum required: ${minLength} characters.`
+      );
+    }
+    if (KNOWN_DEV_SECRETS.has(value)) {
+      throw new Error(
+        `[SECURITY] ${key} is set to a known development placeholder value. ` +
+        `Generate a cryptographically random secret for production use.`
+      );
+    }
+    return value;
   }
-  return developmentFallback;
+
+  // Development / test: use provided value or fallback
+  return value ?? developmentFallback;
+}
+
+/**
+ * Validates CORS_ORIGIN configuration.
+ * In production, wildcard '*' combined with credentials: true is rejected
+ * by browsers and is a security misconfiguration.
+ */
+function corsOrigin(key: string, fallback: string): string {
+  const value = process.env[key] ?? fallback;
+  const isProduction = process.env['NODE_ENV'] === 'production';
+
+  if (isProduction && value.split(',').map((o) => o.trim()).includes('*')) {
+    throw new Error(
+      `[SECURITY] CORS_ORIGIN cannot include '*' (wildcard) in production when credentials are enabled. ` +
+      `Set CORS_ORIGIN to your specific frontend domain(s), e.g.: https://yourapp.com`
+    );
+  }
+  return value;
 }
 
 export const env = {
@@ -75,11 +143,11 @@ export const env = {
   LOG_LEVEL: optional('LOG_LEVEL', 'debug'),
 
   // Security
-  SESSION_HMAC_SECRET: secret('SESSION_HMAC_SECRET', 'change-me-in-development-minimum-32-chars!!'),
+  SESSION_HMAC_SECRET: secret('SESSION_HMAC_SECRET', 'change-me-in-development-minimum-32-chars!!', 32),
   NONCE_TTL_SECONDS: optionalInt('NONCE_TTL_SECONDS', 60),
 
   // CORS
-  CORS_ORIGIN: optional('CORS_ORIGIN', 'http://localhost:5173,http://localhost:3000'),
+  CORS_ORIGIN: corsOrigin('CORS_ORIGIN', 'http://localhost:5173,http://localhost:3000'),
 
   // MongoDB
   MONGODB_URI: optional('MONGODB_URI', 'mongodb://localhost:27017/videochat_dev'),
@@ -97,10 +165,9 @@ export const env = {
 
   // TURN / Coturn
   TURN_SERVER_URLS: optional('TURN_SERVER_URLS', 'stun:stun.l.google.com:19302'),
-  TURN_SERVER_SECRET: secret('TURN_SERVER_SECRET', 'change-me-turn-shared-secret'),
-  ADMIN_API_TOKEN: secret('ADMIN_API_TOKEN', 'development-admin-token'),
+  TURN_SERVER_SECRET: secret('TURN_SERVER_SECRET', 'change-me-turn-shared-secret', 20),
+  ADMIN_API_TOKEN: secret('ADMIN_API_TOKEN', 'development-admin-token', 20),
   TURN_CREDENTIAL_TTL_SECONDS: optionalInt('TURN_CREDENTIAL_TTL_SECONDS', 3600),
-
 
   // Rate Limits
   RATE_LIMIT_SESSION_INIT_MAX: optionalInt('RATE_LIMIT_SESSION_INIT_MAX', 3),

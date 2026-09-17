@@ -1,13 +1,9 @@
-import type { Request, Response } from 'express';
+﻿import type { Request, Response } from 'express';
 import { sessionService } from '../services/session.service';
 import { getIpHash, detectCountry } from '../utils/geo.util';
 import { hashSensitiveData } from '../utils/token.util';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-
-// ─────────────────────────────────────────────
-// Session Controller
-// ─────────────────────────────────────────────
 
 export class SessionController {
   /**
@@ -33,7 +29,6 @@ export class SessionController {
     const ipHash = getIpHash(req);
     const country = detectCountry(req);
 
-    // Check if banned before creating session
     const fingerprintHash = hashSensitiveData(deviceFingerprint);
     const banCheck = await sessionService.isBanned({
       sessionId: 'pre-session',
@@ -102,26 +97,35 @@ export class SessionController {
   /**
    * GET /api/v1/session/iceservers
    * Returns dynamic TURN/STUN credentials for the requesting session.
+   * Retired STUN entries (stun.services.mozilla.com) have been removed.
+   * In production, if TURN URLs are localhost-only, they are excluded and
+   * a warning is logged.
    */
   async getIceServers(req: Request, res: Response): Promise<void> {
     const session = (req as Request & { session: { sessionId: string } }).session;
     const credentials = sessionService.getTurnCredentials(session.sessionId);
 
-    const iceServers: any[] = [
+    // Valid, documented STUN servers only. Mozilla STUN retired.
+    const iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }> = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.services.mozilla.com' },
       { urls: 'stun:global.stun.twilio.com:3478' },
     ];
 
     const turnUrls = credentials.urls || [];
-    const isLocalhost = turnUrls.some((url: string) => url.includes('localhost') || url.includes('127.0.0.1'));
-    
+    const isLocalhost = turnUrls.some((url: string) =>
+      url.includes('localhost') || url.includes('127.0.0.1')
+    );
+
     if (turnUrls.length > 0 && !isLocalhost) {
       iceServers.push({
         urls: turnUrls,
         username: credentials.username,
         credential: credentials.credential,
+      });
+    } else if (turnUrls.length > 0 && isLocalhost && env.NODE_ENV === 'production') {
+      logger.warn('SessionController: TURN_SERVER_URLS contains localhost - TURN excluded from ICE config', {
+        urls: turnUrls,
       });
     }
 

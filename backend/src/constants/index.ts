@@ -1,10 +1,10 @@
-// ─────────────────────────────────────────────
+﻿// _____________________________________________
 // Socket.IO Event Name Constants
 // Single source of truth for all event names
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export const SocketEvents = {
-  // ── Client → Server ──────────────────────
+  // Client to Server
   JOIN_QUEUE: 'join_queue',
   LEAVE_QUEUE: 'leave_queue',
   CHAT_MESSAGE: 'chat:message',
@@ -16,7 +16,7 @@ export const SocketEvents = {
   REPORT_SUBMIT: 'report:submit',
   HEARTBEAT: 'heartbeat',
 
-  // ── Server → Client ──────────────────────
+  // Server to Client
   QUEUE_JOINED: 'queue:joined',
   QUEUE_POSITION: 'queue:position',
   MATCH_FOUND: 'match:found',
@@ -29,11 +29,13 @@ export const SocketEvents = {
   SESSION_BANNED: 'session:banned',
   SESSION_ERROR: 'session:error',
   HEARTBEAT_ACK: 'heartbeat:ack',
+  // Added: report acknowledgement (previously a raw string literal in report.handler.ts)
+  REPORT_SUBMITTED: 'report:submitted',
 } as const;
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Redis Pub/Sub Channels
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export const PubSubChannels = {
   MATCH_EVENTS: 'match:events',
@@ -42,9 +44,9 @@ export const PubSubChannels = {
   SESSION_EVENTS: 'session:events',
 } as const;
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Redis Key Factory
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export const RedisKeys = {
   queue: {
@@ -85,9 +87,9 @@ export const RedisKeys = {
   ban: (hash: string) => `ban:${hash}`,
 } as const;
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Error Codes
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export const ErrorCodes = {
   // Auth
@@ -112,9 +114,9 @@ export const ErrorCodes = {
   REPORT_COOLDOWN: 'REPORT_COOLDOWN',
 } as const;
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Application Limits
-// ─────────────────────────────────────────────
+// _____________________________________________
 
 export const Limits = {
   CHAT_MESSAGE_MAX_LENGTH: 500,
@@ -136,4 +138,6 @@ export const Limits = {
   MATCH_GLOBAL_FALLBACK_SECONDS: 30,
   NONCE_TTL_SECONDS: 60,
   SOCKET_PAYLOAD_MAX_BYTES: 8_192,    // 8 KB
+  SDP_MAX_BYTES: 16_384,              // 16 KB - application-layer SDP size limit
+  ICE_CANDIDATE_MAX_BYTES: 2_048,     // 2 KB - application-layer ICE candidate limit
 } as const;

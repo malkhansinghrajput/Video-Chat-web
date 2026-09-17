@@ -1,0 +1,40 @@
+﻿version: '3.9'
+
+# Production Docker Compose override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# All secrets MUST be provided as environment variables or Docker secrets.
+# No development values or credentials are hardcoded here.
+
+services:
+  backend:
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      LOG_LEVEL: info
+      # All secrets from deployment environment - no hardcoded values
+      SESSION_HMAC_SECRET: ${SESSION_HMAC_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URL: ${REDIS_URL}
+      REDIS_TLS: ${REDIS_TLS}
+      TURN_SERVER_URLS: ${TURN_SERVER_URLS}
+      TURN_SERVER_SECRET: ${TURN_SERVER_SECRET}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      TURN_CREDENTIAL_TTL_SECONDS: ${TURN_CREDENTIAL_TTL_SECONDS}
+      HEARTBEAT_INTERVAL_MS: 25000
+      RECONNECT_GRACE_PERIOD_MS: 5000
+      REGION: ${REGION}
+    volumes: []  # No source mounts in production
+
+  # Remove development UI tools from production
+  mongo_express:
+    profiles:
+      - dev-only
+
+  redis_commander:
+    profiles:
+      - dev-only

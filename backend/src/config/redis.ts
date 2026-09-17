@@ -1,10 +1,10 @@
-import Redis from 'ioredis';
+﻿import Redis from 'ioredis';
 import { logger } from './logger';
 import { env } from './env';
 
-// ─────────────────────────────────────────────
+// _____________________________________________
 // Error throttle: avoid log spam during OOM / outage
-// ─────────────────────────────────────────────
+// _____________________________________________
 function makeErrorThrottle(name: string) {
   let lastLoggedAt = 0;
   return (e: Error) => {
@@ -66,7 +66,7 @@ export async function connectRedis(): Promise<void> {
     redisPub.connect(),
     redisSub.connect(),
   ]);
-  logger.info('Redis: all clients connected ✓');
+  logger.info('Redis: all clients connected OK');
 }
 
 export async function disconnectRedis(): Promise<void> {
@@ -100,9 +100,12 @@ export async function getRedisHealth(): Promise<{ status: string; latencyMs?: nu
 
 /**
  * Subscribe to a Redis channel with automatic retry on failure.
- * Call this instead of redisSub.subscribe() directly, so OOM errors
- * don't permanently kill the subscription.
+ * This function is IDEMPOTENT: calling it multiple times with the same
+ * channel registers only one message listener and one ready listener,
+ * preventing EventEmitter listener leaks.
  */
+const _subscribedChannels = new Set<string>();
+
 export function subscribeToChannel(
   channel: string,
   retryIntervalMs: number,
@@ -111,7 +114,7 @@ export function subscribeToChannel(
   function attempt() {
     redisSub.subscribe(channel, (err) => {
       if (err) {
-        logger.error(`Redis[sub]: failed to subscribe to ${channel} — retrying in ${retryIntervalMs}ms`, {
+        logger.error(`Redis[sub]: failed to subscribe to ${channel} - retrying in ${retryIntervalMs}ms`, {
           error: err.message,
         });
         setTimeout(attempt, retryIntervalMs);
@@ -121,17 +124,26 @@ export function subscribeToChannel(
     });
   }
 
-  redisSub.on('message', (_ch: string, message: string) => {
-    if (_ch === channel) onMessage(message);
-  });
+  // Register message listener only once per channel to prevent leaks.
+  if (!_subscribedChannels.has(channel)) {
+    _subscribedChannels.add(channel);
 
-  // Re-subscribe automatically when the connection is restored after a drop
-  redisSub.on('ready', () => {
-    redisSub.subscribe(channel, (err) => {
-      if (err) logger.warn(`Redis[sub]: re-subscribe to ${channel} failed`, { error: err.message });
+    redisSub.on('message', (_ch: string, message: string) => {
+      if (_ch === channel) onMessage(message);
     });
-  });
+
+    // Re-subscribe automatically when the connection is restored after a drop.
+    // Register the 'ready' handler only once (when the first channel is added).
+    if (_subscribedChannels.size === 1) {
+      redisSub.on('ready', () => {
+        for (const ch of _subscribedChannels) {
+          redisSub.subscribe(ch, (err) => {
+            if (err) logger.warn(`Redis[sub]: re-subscribe to ${ch} failed`, { error: err.message });
+          });
+        }
+      });
+    }
+  }
 
   attempt();
 }
-
