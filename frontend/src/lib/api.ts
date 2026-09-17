@@ -132,7 +132,7 @@ export const api = {
   },
 
   /**
-   * Get live analytics (online count) — hits /health/analytics/live
+   * Get live analytics (online count) — hits /health/analytics/count
    *
    * NOTE: This uses a hardcoded relative path that assumes:
    *   - Dev: Vite proxy routes /health → http://localhost:3001
@@ -141,7 +141,7 @@ export const api = {
    * this URL will need to be updated or proxied.
    */
   getAnalytics(): Promise<OnlineCountResponse> {
-    return fetch('/health/analytics/live')
+    return fetch('/health/analytics/count')
       .then((r) => r.json()) as Promise<OnlineCountResponse>;
   },
 };
