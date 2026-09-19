@@ -3,20 +3,20 @@
  * Base URL is proxied via Vite in dev, same-origin in prod
  */
 
-// Safety guard: if VITE_API_URL is set to a localhost/127.0.0.1 address
-// but the page is served from a real (non-localhost) host, fall back to the
-// same-origin relative path. This prevents a dev .env from breaking production.
+// URL strategy:
+//   Dev  (VITE_API_URL is localhost): use relative path → Vite proxy handles it,
+//         no cross-origin request, no CORS needed.
+//   Prod (VITE_API_URL is a real https:// URL): use the full configured URL.
+//         Vite proxy is not running; the browser makes a cross-origin request
+//         and the backend CORS handles it.
 const _configuredApiUrl = import.meta.env.VITE_API_URL;
 const _isApiUrlLocalhost =
   _configuredApiUrl &&
   (_configuredApiUrl.includes('localhost') || _configuredApiUrl.includes('127.0.0.1'));
-const _isPageLocalhost =
-  typeof window !== 'undefined' &&
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 const BASE: string =
-  _configuredApiUrl && !(_isApiUrlLocalhost && !_isPageLocalhost)
-    ? _configuredApiUrl
-    : '/api/v1';
+  _configuredApiUrl && !_isApiUrlLocalhost
+    ? _configuredApiUrl   // Prod: full cross-origin URL
+    : '/api/v1';           // Dev: relative → goes through Vite proxy, no CORS
 
 function getToken(): string | null {
   return sessionStorage.getItem('vc_token');
@@ -149,14 +149,16 @@ export const api = {
     const isBackendLocalhost =
       configuredBackend &&
       (configuredBackend.includes('localhost') || configuredBackend.includes('127.0.0.1'));
-    const isPageLocalhost =
-      typeof window !== 'undefined' &&
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
+    // Same strategy as BASE above:
+    //   Dev  (localhost backend): use '' so request becomes /health/analytics/count
+    //         → Vite proxy routes /health → backend, no CORS.
+    //   Prod (real https:// backend): use full URL, browser makes cross-origin
+    //         request, backend CORS handles it.
     const analyticsBase =
-      configuredBackend && !(isBackendLocalhost && !isPageLocalhost)
-        ? configuredBackend
-        : '';
+      configuredBackend && !isBackendLocalhost
+        ? configuredBackend  // Prod: full cross-origin URL
+        : '';                 // Dev: relative → Vite proxy
 
     return fetch(`${analyticsBase}/health/analytics/count`)
       .then((r) => r.json()) as Promise<OnlineCountResponse>;

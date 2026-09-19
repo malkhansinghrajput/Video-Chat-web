@@ -45,23 +45,20 @@ export async function connectSocket(token: string): Promise<Socket> {
 
   const io = await getIo();
 
-  // In dev: Vite proxy routes '/' to backend:3001
-  // In prod: same-origin OR the VITE_BACKEND_URL set in the hosting platform's env vars
-  //
-  // Safety guard: if VITE_BACKEND_URL is set to a localhost/127.0.0.1 address
-  // but the page is actually running on a real (non-localhost) host, fall back
-  // to window.location.origin. This prevents a dev .env from breaking production.
+  // URL strategy — mirrors the same logic as api.ts BASE:
+  //   Dev  (VITE_BACKEND_URL is localhost): connect to window.location.origin
+  //         so Socket.IO uses the /socket.io Vite proxy entry (ws: true).
+  //         No cross-origin, no CORS.
+  //   Prod (VITE_BACKEND_URL is a real https:// URL): connect directly.
+  //         Backend CORS handles the cross-origin WebSocket handshake.
   const configuredUrl = import.meta.env.VITE_BACKEND_URL;
   const isConfiguredLocalhost =
     configuredUrl &&
     (configuredUrl.includes('localhost') || configuredUrl.includes('127.0.0.1'));
-  const isActuallyLocalhost =
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1';
   const url =
-    configuredUrl && !(isConfiguredLocalhost && !isActuallyLocalhost)
-      ? configuredUrl
-      : window.location.origin;
+    configuredUrl && !isConfiguredLocalhost
+      ? configuredUrl           // Prod: real https:// backend
+      : window.location.origin; // Dev: same origin → Vite proxy → backend
 
   _socket = io(url, {
     auth: { token },
