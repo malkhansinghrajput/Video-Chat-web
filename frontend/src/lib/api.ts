@@ -134,14 +134,31 @@ export const api = {
   /**
    * Get live analytics (online count) — hits /health/analytics/count
    *
-   * NOTE: This uses a hardcoded relative path that assumes:
-   *   - Dev: Vite proxy routes /health → http://localhost:3001
-   *   - Prod: Same-origin deployment (frontend and backend on same domain)
-   * If the deployment splits frontend/backend onto different origins,
-   * this URL will need to be updated or proxied.
+   * Derives the URL from VITE_BACKEND_URL (same localhost-safety guard as
+   * the socket client). Falls back to a same-origin relative path when:
+   *   - VITE_BACKEND_URL is not set, OR
+   *   - VITE_BACKEND_URL is a localhost URL but the page is on a real host
+   *     (dev .env accidentally shipped to production).
+   *
+   * In practice:
+   *   - Dev:  Vite proxy routes /health → http://localhost:3001
+   *   - Prod: VITE_BACKEND_URL=https://api.example.com → full cross-origin URL
    */
   getAnalytics(): Promise<OnlineCountResponse> {
-    return fetch('/health/analytics/count')
+    const configuredBackend = import.meta.env.VITE_BACKEND_URL as string | undefined;
+    const isBackendLocalhost =
+      configuredBackend &&
+      (configuredBackend.includes('localhost') || configuredBackend.includes('127.0.0.1'));
+    const isPageLocalhost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+    const analyticsBase =
+      configuredBackend && !(isBackendLocalhost && !isPageLocalhost)
+        ? configuredBackend
+        : '';
+
+    return fetch(`${analyticsBase}/health/analytics/count`)
       .then((r) => r.json()) as Promise<OnlineCountResponse>;
   },
 };
