@@ -13,7 +13,10 @@
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "validate:staging": "set NODE_ENV=test&& set ENV_FILE=.env.test&& ts-node scripts/validate-staging.ts",
-    "validate:staging:writes": "set NODE_ENV=test&& set ENV_FILE=.env.test&& set VALIDATION_ALLOW_DESTRUCTIVE=true&& ts-node scripts/validate-staging.ts --write"
+    "validate:staging:writes": "set NODE_ENV=test&& set ENV_FILE=.env.test&& set VALIDATION_ALLOW_DESTRUCTIVE=true&& ts-node scripts/validate-staging.ts --write",
+    "check:predeploy": "ts-node scripts/pre-deploy-check.ts",
+    "check:security": "ts-node scripts/security-verify.ts",
+    "check:e2e": "ts-node scripts/e2e-session-flow.ts"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

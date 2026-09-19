@@ -43,6 +43,21 @@ export class HealthController {
     ]);
 
     const isMatchingEngineHealthy = matchingEngine.isHealthy;
+
+    // TURN config check — non-fatal but surfaced for operator visibility
+    const turnUrls = env.TURN_SERVER_URLS
+      ? env.TURN_SERVER_URLS.split(',').map((u) => u.trim()).filter(Boolean)
+      : [];
+    const turnIsLocalhost = turnUrls.some(
+      (u) => u.includes('localhost') || u.includes('127.0.0.1'),
+    );
+    const turnStatus =
+      turnUrls.length === 0
+        ? 'not_configured'
+        : turnIsLocalhost
+          ? 'localhost_only'
+          : 'ok';
+
     const isReady = dbHealth.status === 'connected' && redisHealth.status === 'healthy' && isMatchingEngineHealthy;
 
     res.status(isReady ? 200 : 503).json({
@@ -51,6 +66,7 @@ export class HealthController {
         mongodb: dbHealth,
         redis: redisHealth,
         matchingEngine: isMatchingEngineHealthy ? 'running' : 'stopped',
+        turn: turnStatus,
       },
       timestamp: Date.now(),
     });

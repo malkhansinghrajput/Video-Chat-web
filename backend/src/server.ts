@@ -75,6 +75,10 @@ async function bootstrap(): Promise<void> {
     const duration = Date.now() - startTime;
     const memory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     
+    // In production the server sits behind a reverse proxy/load balancer.
+    // The real public URLs come from DNS/TLS config on the host platform,
+    // not from the local port. We only show the internal bind address here.
+    const displayHost = env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
     logger.info(`\n` +
       `=========================================\n` +
       `SYSTEM READY [${env.NODE_ENV.toUpperCase()}]\n` +
@@ -83,9 +87,8 @@ async function bootstrap(): Promise<void> {
       `  Node:       ${process.version}\n` +
       `  Duration:   ${duration}ms\n` +
       `  Heap:       ${memory} MB\n` +
-      `  API:        http://localhost:${env.PORT}/api/v1\n` +
-      `  Health:     http://localhost:${env.PORT}/health\n` +
-      `  Socket.IO:  ws://localhost:${env.PORT}\n` +
+      `  Health:     http://${displayHost}:${env.PORT}/health\n` +
+      `  API:        http://${displayHost}:${env.PORT}/api/v1\n` +
       `=========================================`
     );
   });
