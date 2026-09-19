@@ -31,14 +31,17 @@ export function createApp() {
   }));
 
   // ── CORS ──────────────────────────────────
-  const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
+  const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim().replace(/\/$/, ''));
   app.use(cors({
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Not allowed by CORS'));
+      if (!origin || allowedOrigins.includes('*')) {
+        return cb(null, true);
       }
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        return cb(null, true);
+      }
+      cb(new Error('Not allowed by CORS'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

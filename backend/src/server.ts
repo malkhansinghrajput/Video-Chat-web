@@ -39,16 +39,27 @@ async function bootstrap(): Promise<void> {
   const app = createApp();
   const httpServer = createServer(app);
 
-  // Build the allowed origins list.
-  // Filter '*' from Socket.IO origins when credentials are enabled — browsers
-  // reject credentialed requests to wildcard origins (CORS spec).
-  const corsOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
-  const socketCorsOrigins = corsOrigins.filter((o) => o !== '*');
+  // Build the allowed origins list from CORS_ORIGIN env var.
+  const corsOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim().replace(/\/$/, ''));
+  const hasWildcard = corsOrigins.includes('*');
+
+  // Socket.IO CORS logic with origin normalization
+  const socketCorsOrigin = hasWildcard
+    ? true
+    : (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+        if (!origin) return cb(null, true);
+        const normalized = origin.replace(/\/$/, '');
+        if (corsOrigins.includes(normalized)) {
+          cb(null, true);
+        } else {
+          cb(new Error('Not allowed by CORS'));
+        }
+      };
 
   // Socket.IO Server
   const io = new SocketServer(httpServer, {
     cors: {
-      origin: socketCorsOrigins.length > 0 ? socketCorsOrigins : corsOrigins,
+      origin: socketCorsOrigin,
       credentials: true,
     },
     transports: ['websocket', 'polling'],
