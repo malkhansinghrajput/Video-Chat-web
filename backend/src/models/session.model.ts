@@ -1,4 +1,4 @@
-import { Schema, model, Document, Types } from 'mongoose';
+import { Schema, model, Document } from 'mongoose';
 
 export interface ISession extends Document {
   sessionId: string;

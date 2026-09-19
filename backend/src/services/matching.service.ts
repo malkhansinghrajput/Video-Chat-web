@@ -5,7 +5,7 @@ import { logger, logError } from '../config/logger';
 import { RedisKeys, PubSubChannels, Limits } from '../constants';
 import { sessionService } from './session.service';
 import { env } from '../config/env';
-import type { QueueEntry, MatchResult, Room } from '../types';
+import type { QueueEntry, Room } from '../types';
 
 // ─────────────────────────────────────────────
 // Queue Service

@@ -50,13 +50,15 @@ const KNOWN_DEV_SECRETS = new Set([
   'changeme',
 ]);
 
-function required(key: string): string {
+function _required(key: string): string {
   const val = process.env[key];
   if (!val) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
   return val;
 }
+void _required;
+
 
 function optional(key: string, fallback: string): string {
   return process.env[key] ?? fallback;

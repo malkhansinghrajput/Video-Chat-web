@@ -2,7 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import { sessionService } from '../services/session.service';
 import { queueService, roomService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
-import { SocketEvents, RedisKeys, ErrorCodes, Limits } from '../constants';
+import { SocketEvents, RedisKeys, ErrorCodes } from '../constants';
 import { redisRateLimit, redisAnalytics } from '../config/redis';
 import { env } from '../config/env';
 import type { SocketData, QueueEntry, JoinQueuePayload } from '../types';

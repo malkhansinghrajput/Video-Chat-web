@@ -1,5 +1,5 @@
-﻿import mongoose from 'mongoose';
-import { v4 as uuidv4 } from 'uuid';
+import mongoose from 'mongoose';
+
 import { redisSessions, redisAnalytics } from '../config/redis';
 import { Session } from '../models/session.model';
 import { Ban } from '../models/ban.model';

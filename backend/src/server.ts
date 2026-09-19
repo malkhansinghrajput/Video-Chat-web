@@ -1,8 +1,9 @@
-﻿import { createServer } from 'http';
+import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
 import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/database';
-import { connectRedis, disconnectRedis } from './config/redis';
+import { connectRedis, disconnectRedis, redisPub, redisSub } from './config/redis';
 import { matchingEngine } from './services/matching.service';
 import { registerConnectionHandlers, clearAllDisconnectTimers } from './sockets/connection.handler';
 import { socketAuthMiddleware } from './middlewares/auth.middleware';
@@ -56,6 +57,9 @@ async function bootstrap(): Promise<void> {
     maxHttpBufferSize: 8 * 1024, // 8 KB max event payload
     connectTimeout: 10_000,
   });
+
+  // Socket.IO Redis Adapter for multi-instance horizontal scaling
+  io.adapter(createAdapter(redisPub, redisSub));
 
   // Socket.IO middleware
   io.use(socketAuthMiddleware);

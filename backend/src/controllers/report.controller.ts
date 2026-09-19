@@ -2,7 +2,6 @@ import type { Request, Response } from 'express';
 import { moderationService } from '../services/moderation.service';
 import { Report } from '../models/report.model';
 import { Ban } from '../models/ban.model';
-import { logger } from '../config/logger';
 
 // ─────────────────────────────────────────────
 // Report Controller
@@ -65,8 +64,8 @@ export class ReportController {
    * GET /api/v1/reports/:reportId
    */
   async getReport(req: Request, res: Response): Promise<void> {
-    const session = (req as Request & { session: { sessionId: string } }).session;
-    const report = await Report.findOne({ _id: req.params['reportId'], reporterSessionId: session.sessionId });
+    const reportId = req.params['reportId'] as string;
+    const report = await Report.findById(reportId);
     if (!report) {
       res.status(404).json({
         success: false,
@@ -77,48 +76,35 @@ export class ReportController {
     }
     res.json({ success: true, data: report, timestamp: Date.now() });
   }
-}
 
-// ─────────────────────────────────────────────
-// Admin Controller (Moderation)
-// ─────────────────────────────────────────────
-
-export class AdminController {
   /**
    * GET /api/v1/admin/reports
    */
   async listReports(req: Request, res: Response): Promise<void> {
-    const { status = 'pending', page = '1', limit = '20' } = req.query as Record<string, string>;
-    const pageNum = parseInt(page, 10);
-    const limitNum = Math.min(parseInt(limit, 10), 100);
-    const skip = (pageNum - 1) * limitNum;
+    const status = req.query['status'] as string | undefined;
+    const query  = status ? { status } : {};
+    const reports = await Report.find(query).sort({ createdAt: -1 }).limit(100);
 
-    const [items, total] = await Promise.all([
-      Report.find({ moderationStatus: status }).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
-      Report.countDocuments({ moderationStatus: status }),
-    ]);
-
-    res.json({
-      success: true,
-      data: { items, total, page: pageNum, pageSize: limitNum, hasMore: skip + items.length < total },
-      timestamp: Date.now(),
-    });
+    res.json({ success: true, data: reports, timestamp: Date.now() });
   }
 
   /**
    * POST /api/v1/admin/reports/:id/action
    */
-  async takeAction(req: Request, res: Response): Promise<void> {
-    const { action, sessionId, ipHash, fingerprintHash, durationHours, notes } = req.body as Record<string, string>;
+  async actionReport(req: Request, res: Response): Promise<void> {
+    const reportId = req.params['id'] as string;
+    const { action, banDurationHours, notes } = req.body as {
+      action: 'ban_temp' | 'ban_perm' | 'dismiss';
+      banDurationHours?: number;
+      notes?: string;
+    };
 
+    const adminId = 'admin'; // In production, extract from admin token
     await moderationService.takeAction({
-      moderatorId: 'admin',
-      reportId: String(req.params['id']),
+      moderatorId: adminId,
+      reportId,
       action: action as never,
-      sessionId,
-      ipHash,
-      fingerprintHash,
-      durationHours: durationHours ? parseInt(durationHours, 10) : undefined,
+      durationHours: banDurationHours,
       notes,
     });
 
@@ -128,7 +114,7 @@ export class AdminController {
   /**
    * GET /api/v1/admin/bans
    */
-  async listBans(req: Request, res: Response): Promise<void> {
+  async listBans(_req: Request, res: Response): Promise<void> {
     const bans = await Ban.find({
       $or: [{ isPermanent: true }, { expiresAt: { $gt: new Date() } }],
     }).sort({ bannedAt: -1 }).limit(100);
@@ -139,11 +125,12 @@ export class AdminController {
   /**
    * DELETE /api/v1/admin/bans/:id
    */
-  async revokeBan(req: Request, res: Response): Promise<void> {
-    await Ban.findByIdAndDelete(req.params['id']);
-    res.json({ success: true, data: { message: 'Ban revoked' }, timestamp: Date.now() });
+  async liftBan(req: Request, res: Response): Promise<void> {
+    const banId = req.params['id'] as string;
+    await Ban.findByIdAndDelete(banId);
+
+    res.json({ success: true, data: { message: 'Ban lifted' }, timestamp: Date.now() });
   }
 }
 
 export const reportController = new ReportController();
-export const adminController = new AdminController();

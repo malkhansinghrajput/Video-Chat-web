@@ -69,7 +69,7 @@ export function createApp() {
   app.use('/api/v1/analytics', healthRoutes); // sub-mounted
 
   // ── Root Route (for Render/Health checks) ─
-  app.get('/', (req, res) => {
+  app.get('/', (_req, res) => {
     res.status(200).send('VideoChat API is running');
   });
 

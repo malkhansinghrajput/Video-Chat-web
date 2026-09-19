@@ -1,4 +1,4 @@
-import { Schema, model, Document, Types } from 'mongoose';
+import { Schema, model, Document } from 'mongoose';
 import type { ReportReason, ModerationStatus, ModerationAction } from '../types';
 
 export interface IReport extends Document {
