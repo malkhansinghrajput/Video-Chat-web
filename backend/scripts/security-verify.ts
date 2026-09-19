@@ -291,7 +291,7 @@ async function testSecurityHeaders(): Promise<void> {
   }
 }
 
-async function testResponseLeakage(token: string | null): Promise<void> {
+async function testResponseLeakage(_token: string | null): Promise<void> {
   console.log('\n── Secret Leakage ─────────────────────────────────');
 
   // Check that error responses don't contain env var names or secret-like values
@@ -323,9 +323,7 @@ async function testResponseLeakage(token: string | null): Promise<void> {
 async function testRateLimiting(): Promise<void> {
   console.log('\n── Rate Limiting ──────────────────────────────────');
 
-  // Hit the general API rate limiter (default 100 req/60s)
-  // We don't actually want to trigger it in most cases, just verify the header is present
-  const res = await httpGet(`${BASE}/health`);
+  // Health endpoint is not rate-limited; check an API endpoint for rate-limit headers
 
   // Health endpoint is not rate-limited, check an API endpoint header
   const apiRes = await httpGet(`${API}/session/validate`);
