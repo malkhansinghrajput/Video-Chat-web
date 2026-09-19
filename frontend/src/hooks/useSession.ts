@@ -112,6 +112,19 @@ export function useSession(): UseSessionReturn {
         return;
       }
 
+      // Detect backend missing / 405 Method Not Allowed / configuration error — stop retrying
+      if (
+        msg.includes('405') ||
+        msg.includes('Method Not Allowed') ||
+        msg.includes('Backend API not reachable') ||
+        msg.includes('VITE_API_URL')
+      ) {
+        setError('Backend API unreachable (405 Method Not Allowed). VITE_API_URL is missing in Vercel settings or backend is not deployed.');
+        setStatus('error');
+        // Keep initRef.current = true to stop infinite retries on static host
+        return;
+      }
+
       setError(msg);
       setStatus('error');
       initRef.current = false; // allow retry on non-rate-limit errors

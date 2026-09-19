@@ -60,6 +60,15 @@ export async function connectSocket(token: string): Promise<Socket> {
       ? configuredUrl           // Prod: real https:// backend
       : window.location.origin; // Dev: same origin → Vite proxy → backend
 
+  if (typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    if (!configuredUrl || isConfiguredLocalhost) {
+      console.warn(
+        `[VideoChatWeb Config Warning] VITE_BACKEND_URL is missing or set to localhost on production host (${window.location.hostname}). ` +
+        `Socket.IO will attempt connecting to ${window.location.origin} which has no live WebSocket backend.`
+      );
+    }
+  }
+
   _socket = io(url, {
     auth: { token },
     transports: ['websocket', 'polling'],

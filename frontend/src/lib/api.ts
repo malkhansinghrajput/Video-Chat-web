@@ -18,6 +18,16 @@ const BASE: string =
     ? _configuredApiUrl   // Prod: full cross-origin URL
     : '/api/v1';           // Dev: relative → goes through Vite proxy, no CORS
 
+if (typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+  if (!_configuredApiUrl || _isApiUrlLocalhost) {
+    console.warn(
+      `[VideoChatWeb Config Warning] VITE_API_URL is missing or set to localhost on production host (${window.location.hostname}). ` +
+      `API calls will default to relative path '${BASE}' on the static host and return HTTP 405 Method Not Allowed. ` +
+      `Please configure VITE_API_URL in your hosting platform (Vercel) environment settings.`
+    );
+  }
+}
+
 function getToken(): string | null {
   return sessionStorage.getItem('vc_token');
 }
@@ -43,6 +53,16 @@ async function request<T>(
   });
 
   if (!res.ok) {
+    if (res.status === 405 || res.status === 404) {
+      const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      if (!isLocalhost) {
+        throw new Error(
+          `Backend API not reachable (${res.status} ${res.statusText}). ` +
+          `Request hit static host '${window.location.origin}' instead of live backend server. ` +
+          `Please set VITE_API_URL in your Vercel deployment environment variables.`
+        );
+      }
+    }
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
     throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
   }
