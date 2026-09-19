@@ -1,4 +1,4 @@
-﻿import Redis from 'ioredis';
+import Redis from 'ioredis';
 import { logger } from './logger';
 import { env } from './env';
 
@@ -34,9 +34,16 @@ const base = {
 };
 
 function createRedisClient(): Redis {
-  // Redis Cloud commonly supplies a TLS URL. Respect it when present; the
-  // host/port form remains the default for existing deployments.
-  return env.REDIS_URL ? new Redis(env.REDIS_URL, base) : new Redis({ ...base, db: 0 });
+  if (env.REDIS_URL) {
+    const isPlainRedis = env.REDIS_URL.startsWith('redis://');
+    const options = { ...base };
+    // If the URL explicitly specifies non-TLS redis://, do not force TLS options
+    if (isPlainRedis && !env.REDIS_URL.startsWith('rediss://')) {
+      delete options.tls;
+    }
+    return new Redis(env.REDIS_URL, options);
+  }
+  return new Redis({ ...base, db: 0 });
 }
 
 // Main shared client for all data operations
