@@ -1,4 +1,4 @@
-﻿import type { Server, Socket } from 'socket.io';
+import type { Server, Socket } from 'socket.io';
 import { roomService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
 import { SocketEvents, ErrorCodes, Limits } from '../constants';
@@ -19,12 +19,18 @@ export function handleSignalingEvents(socket: Socket, _io: Server): void {
         socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.INVALID_PAYLOAD, message: 'Offer payload too large' });
         return;
       }
-      const isMember = await roomService.isRoomMember(payload.roomId, data.sessionId);
-      if (!isMember) {
-        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.NOT_IN_ROOM, message: 'Not a room member' });
-        return;
+      // Phase 4E fast-path: use cached peerSocketId when room matches, else Redis lookup.
+      let peerSocketId: string | null = null;
+      if (data.activeRoomId === payload.roomId && data.peerSocketId) {
+        peerSocketId = data.peerSocketId;
+      } else {
+        const isMember = await roomService.isRoomMember(payload.roomId, data.sessionId);
+        if (!isMember) {
+          socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.NOT_IN_ROOM, message: 'Not a room member' });
+          return;
+        }
+        peerSocketId = await roomService.getPeerSocketId(payload.roomId, data.sessionId);
       }
-      const peerSocketId = await roomService.getPeerSocketId(payload.roomId, data.sessionId);
       if (!peerSocketId) {
         socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.ROOM_NOT_FOUND, message: 'Peer not found' });
         return;
@@ -47,12 +53,18 @@ export function handleSignalingEvents(socket: Socket, _io: Server): void {
         socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.INVALID_PAYLOAD, message: 'Answer payload too large' });
         return;
       }
-      const isMember = await roomService.isRoomMember(payload.roomId, data.sessionId);
-      if (!isMember) {
-        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.NOT_IN_ROOM, message: 'Not a room member' });
-        return;
+      // Phase 4E fast-path: use cached peerSocketId when room matches, else Redis lookup.
+      let peerSocketId: string | null = null;
+      if (data.activeRoomId === payload.roomId && data.peerSocketId) {
+        peerSocketId = data.peerSocketId;
+      } else {
+        const isMember = await roomService.isRoomMember(payload.roomId, data.sessionId);
+        if (!isMember) {
+          socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.NOT_IN_ROOM, message: 'Not a room member' });
+          return;
+        }
+        peerSocketId = await roomService.getPeerSocketId(payload.roomId, data.sessionId);
       }
-      const peerSocketId = await roomService.getPeerSocketId(payload.roomId, data.sessionId);
       if (!peerSocketId) return;
       socket.to(peerSocketId).emit(SocketEvents.WEBRTC_ANSWER, { sdp: payload.sdp, roomId: payload.roomId });
       logger.debug('Signaling: answer relayed', { roomId: payload.roomId });

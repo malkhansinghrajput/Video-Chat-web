@@ -1,4 +1,4 @@
-﻿import type { Server, Socket } from 'socket.io';
+import type { Server, Socket } from 'socket.io';
 import { sessionService } from '../services/session.service';
 import { queueService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
@@ -150,9 +150,12 @@ async function handleDisconnect(socket: Socket, io: Server, reason: string): Pro
     const session = await sessionService.getSession(sessionId);
     if (!session) return;
 
-    // If in queue, remove from queue
+    // If in queue, remove from queue and reset status to idle.
+    // Without the status reset the session stays as 'searching' in Redis,
+    // causing the next join_queue to be rejected with SESSION_NOT_AVAILABLE.
     if (session.status === 'searching') {
       await queueService.dequeue(sessionId, socket.id);
+      await sessionService.updateSession(sessionId, { status: 'idle' } as never);
     }
 
     // If in a room, notify peer after grace period (supports reconnect).
@@ -179,9 +182,23 @@ async function finalizeDisconnect(
     disconnectTimers.delete(sessionId);
 
     // Check if the client reconnected within the grace period.
-    // If so, the new socket will have a different ID — abort final cleanup.
+    // If the current socket ID differs, the client reconnected — do not destroy.
+    // Instead heal the session state to idle so the reconnected client can re-queue.
     const current = await sessionService.getSession(sessionId);
-    if (!current || current.socketId !== socket.id) return;
+    if (!current) return;
+    if (current.socketId !== socket.id) {
+      // Client reconnected during grace period — heal any stale room references
+      if (current.status === 'matched' || current.status === 'connected') {
+        await sessionService.updateSession(sessionId, {
+          status: 'idle',
+          roomId: undefined,
+          peerId: undefined,
+          peerSocketId: undefined,
+        } as never);
+        logger.info('Socket: healed reconnected session state to idle', { sessionId, roomId });
+      }
+      return;
+    }
 
     // Notify the peer that the session is gone.
     if (peerSocketId) io.to(peerSocketId).emit(SocketEvents.PEER_LEFT, { reason: 'disconnect' });

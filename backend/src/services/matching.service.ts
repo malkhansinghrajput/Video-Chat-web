@@ -291,6 +291,10 @@ export class MatchingEngine {
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
+  // Phase 4E: track when queue last had ≥2 candidates so we don't slow
+  // poll immediately after both users join within the same 50ms window.
+  private lastActiveQueueAt = 0;
+  private static readonly IDLE_SLOWDOWN_GRACE_MS = 2_000;
 
   private static readonly reservePairScript = `
     if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
@@ -339,12 +343,21 @@ export class MatchingEngine {
     this.runMatchingCycle()
       .catch((err) => logError('MatchingEngine: poll error', err))
       .finally(async () => {
-        // Adaptive polling: fast when queue has candidates, slow when idle
-        // This reduces Redis calls by ~90% during off-peak hours
+        // Adaptive polling: fast when queue has candidates, slow when idle.
+        // Phase 4E fix: only slow down after the queue has been sparse for
+        // IDLE_SLOWDOWN_GRACE_MS — prevents the race where two users join
+        // within a single 50ms window but the engine already decelerated.
         let interval = env.MATCH_POLL_INTERVAL_MS;
         try {
           const depth = await redisQueues.zcard(RedisKeys.queue.global());
-          if (depth < 2) interval = env.MATCH_POLL_IDLE_MS;
+          if (depth >= 2) {
+            this.lastActiveQueueAt = Date.now();
+          } else {
+            const idleMs = Date.now() - this.lastActiveQueueAt;
+            if (idleMs > MatchingEngine.IDLE_SLOWDOWN_GRACE_MS) {
+              interval = env.MATCH_POLL_IDLE_MS;
+            }
+          }
         } catch { /* use default interval on Redis error */ }
 
         this.pollTimer = setTimeout(

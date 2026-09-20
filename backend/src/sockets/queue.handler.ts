@@ -26,10 +26,11 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         return;
       }
 
-      // Check already in queue
+      // Check already in queue (Redis ZSET is ground truth for queue membership)
       const inQueue = await queueService.isInQueue(data.sessionId);
       if (inQueue) {
-        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.ALREADY_IN_QUEUE, message: 'Already in queue' });
+        // Already queued — acknowledge silently so the client is consistent
+        socket.emit(SocketEvents.QUEUE_JOINED, { position: await queueService.getQueueDepth() });
         return;
       }
 
@@ -44,9 +45,36 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         socket.emit(SocketEvents.SESSION_BANNED, { reason: 'Banned', isPermanent: false });
         return;
       }
-      if (session.status !== 'idle') {
-        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.ALREADY_IN_QUEUE, message: 'Session is not available for matching' });
-        return;
+
+      // ── Phase 4A fix: self-heal stale session status ──────────────────────
+      // If session thinks it's matched/connected but has no active room in Redis,
+      // the previous call ended without a clean status reset. Auto-heal to idle
+      // so the user can re-queue without needing a page refresh.
+      if (session.status !== 'idle' && session.status !== 'searching') {
+        if (session.roomId) {
+          // Session still references a room — check whether the room actually exists
+          const room = await roomService.getRoom(session.roomId).catch(() => null);
+          if (room) {
+            // Genuine active room — do not allow queue join
+            socket.emit(SocketEvents.SESSION_ERROR, {
+              code: ErrorCodes.ALREADY_IN_QUEUE,
+              message: 'Session is already in an active call',
+            });
+            return;
+          }
+          // Room is gone (peer disconnected, room TTL expired) — safe to heal
+        }
+        // Reset stale status so we can proceed
+        logger.debug('QueueHandler: healing stale session status to idle', {
+          sessionId: data.sessionId,
+          previousStatus: session.status,
+        });
+        await sessionService.updateSession(data.sessionId, {
+          status: 'idle',
+          roomId: undefined,
+          peerId: undefined,
+          peerSocketId: undefined,
+        } as never);
       }
 
       // Build queue entry (use session data, allow preference override)
@@ -62,7 +90,9 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
 
       const enqueued = await queueService.enqueue(entry);
       if (!enqueued) {
-        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.ALREADY_IN_QUEUE, message: 'Already in queue' });
+        // Race condition: another request enqueued us between the isInQueue check and here.
+        // Acknowledge silently.
+        socket.emit(SocketEvents.QUEUE_JOINED, { position: await queueService.getQueueDepth() });
         return;
       }
       await sessionService.updateSession(data.sessionId, { status: 'searching' } as never);
@@ -132,13 +162,17 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
 
         // Leave socket.io room
         socket.leave(`room:${session.roomId}`);
-        await sessionService.updateSession(data.sessionId, {
-          status: 'idle',
-          roomId: undefined,
-          peerId: undefined,
-          peerSocketId: undefined,
-        } as never);
       }
+
+      // ── Phase 4A fix: always reset to idle BEFORE re-enqueue ──────────────
+      // Ensures session status is idle regardless of previous state so
+      // join_queue does not see a stale 'matched' or 'connected' status.
+      await sessionService.updateSession(data.sessionId, {
+        status: 'idle',
+        roomId: undefined,
+        peerId: undefined,
+        peerSocketId: undefined,
+      } as never);
 
       // Track skip count for analytics
       try { await redisAnalytics.incr(RedisKeys.analytics.skipCount()); } catch { /* non-fatal */ }
@@ -187,6 +221,8 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
         socket.leave(`room:${session.roomId}`);
       }
       await queueService.dequeue(data.sessionId, socket.id);
+
+      // ── Phase 4A fix: explicit idle reset on leave ─────────────────────────
       await sessionService.updateSession(data.sessionId, {
         status: 'idle',
         roomId: undefined,
@@ -200,4 +236,3 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
     }
   });
 }
-
