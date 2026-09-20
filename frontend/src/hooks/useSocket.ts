@@ -35,6 +35,8 @@ export interface UseSocketReturn {
   isConnected: boolean;
   isConnecting: boolean;
   socketError: string | null;
+  /** Clear the current socket error (e.g. after connecting successfully) */
+  clearSocketError: () => void;
   /** Emit join_queue to backend */
   joinQueue: (opts?: { country?: string; language?: string; interests?: string[] }) => void;
   /** Emit chat:next (skip current partner) */
@@ -49,11 +51,18 @@ export interface UseSocketReturn {
 
 const HEARTBEAT_INTERVAL = 25_000;
 
+// Codes for errors that are transient race conditions and should auto-dismiss.
+const TRANSIENT_ERROR_CODES = new Set(['ALREADY_IN_QUEUE', 'SESSION_NOT_AVAILABLE']);
+// Timeout for auto-dismissing transient errors (ms)
+const TRANSIENT_ERROR_DISMISS_MS = 3_000;
+
 export function useSocket(session: SessionInfo | null): UseSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [socketError, setSocketError] = useState<string | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Phase 4B: ref to track auto-dismiss timers for transient errors
+  const errorDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setStatus = useCallStore((s) => s.setStatus);
   const setPartnerStatus = useCallStore((s) => s.setPartnerStatus);
@@ -168,7 +177,7 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
         setPartnerTyping(false);
       });
 
-      // ── Session events ────────────────────────────────────────────────
+      // ── Session events ──────────────────────────────────────────────────────
       socket.on(SocketEvents.SESSION_BANNED, (_data: unknown) => {
         setSocketError('Your session has been banned');
         socket.disconnect();
@@ -176,8 +185,21 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
 
       socket.on(SocketEvents.SESSION_ERROR, (data: unknown) => {
         const payload = data as { code: string; message: string };
-        const msg = payload?.message || payload?.code || 'Session error occurred';
+        const code = payload?.code ?? '';
+        const msg = payload?.message || code || 'Session error occurred';
         setSocketError(`Session error: ${msg}`);
+
+        // Phase 4B: auto-dismiss transient queue errors after 3s.
+        // These errors (ALREADY_IN_QUEUE, SESSION_NOT_AVAILABLE) indicate a
+        // race condition that will self-resolve — showing them permanently
+        // confuses users during an otherwise successful reconnect.
+        if (TRANSIENT_ERROR_CODES.has(code)) {
+          if (errorDismissTimerRef.current) clearTimeout(errorDismissTimerRef.current);
+          errorDismissTimerRef.current = setTimeout(() => {
+            setSocketError(null);
+            errorDismissTimerRef.current = null;
+          }, TRANSIENT_ERROR_DISMISS_MS);
+        }
       });
 
       // ── WebRTC failure ─────────────────────────────────────────────────
@@ -195,6 +217,7 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
     return () => {
       mounted = false;
       stopHeartbeat();
+      if (errorDismissTimerRef.current) clearTimeout(errorDismissTimerRef.current);
       disconnectSocket();
       setIsConnected(false);
     };
@@ -240,10 +263,16 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
     socket.emit(SocketEvents.REPORT_SUBMIT, { reason });
   }, []);
 
+  const clearSocketError = useCallback(() => {
+    if (errorDismissTimerRef.current) clearTimeout(errorDismissTimerRef.current);
+    setSocketError(null);
+  }, []);
+
   return {
     isConnected,
     isConnecting,
     socketError,
+    clearSocketError,
     joinQueue,
     skipPartner,
     leaveChat,

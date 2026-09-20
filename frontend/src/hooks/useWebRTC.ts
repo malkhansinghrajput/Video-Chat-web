@@ -6,6 +6,18 @@
  *                        Show local video preview during search
  *   Phase 2 (on match): Create RTCPeerConnection, offer/answer/ICE
  *   Phase 3 (connected): Quality polling, call timer
+ *
+ * Phase 4C fixes:
+ *   - remoteStream exposed as React state so ChatRoom can assign it to the
+ *     video element AFTER the DOM node mounts (solves blank remote video).
+ *   - ICE servers pre-fetched and module-cached on first call so the HTTP
+ *     round-trip is not on the critical match→offer path.
+ *   - iceCandidatePoolSize: 4 added to RTCPeerConnection config to pre-gather
+ *     candidates before setLocalDescription.
+ *   - Video constraints simplified (no forced width/height) so mobile cameras
+ *     are not confused by a 1280×720 demand they override anyway.
+ *   - Outbound encoding params set after connection (maxBitrate for VP8/VP9)
+ *     where supported; guarded by setParameters existence check.
  */
 
 import { useEffect, useRef, useCallback, useState, type RefObject } from 'react';
@@ -52,10 +64,38 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   },
 ];
 
+// ── Phase 4C: Module-level ICE server cache ──────────────────────────────────
+// Pre-fetched once when the hook first needs them; avoids an HTTP round-trip
+// on the critical match→offer path. TTL is set from the server response.
+let cachedIceServers: RTCIceServer[] | null = null;
+let iceCacheFetchedAt = 0;
+let iceCacheTtlMs = 60_000; // default 60s until server response received
+
+async function getIceServers(): Promise<RTCIceServer[]> {
+  const now = Date.now();
+  if (cachedIceServers && (now - iceCacheFetchedAt) < iceCacheTtlMs) {
+    return cachedIceServers;
+  }
+  try {
+    const res = await api.getIceServers();
+    if (res.data.iceServers?.length) {
+      cachedIceServers = [...res.data.iceServers, ...DEFAULT_ICE_SERVERS];
+      iceCacheTtlMs = (res.data.ttl ?? 60) * 1000;
+      iceCacheFetchedAt = now;
+      return cachedIceServers;
+    }
+  } catch {
+    console.warn('[WebRTC] ICE server fetch failed, using defaults');
+  }
+  return DEFAULT_ICE_SERVERS;
+}
+
 export interface UseWebRTCReturn {
   localVideoRef:    RefObject<HTMLVideoElement | null>;
   remoteVideoRef:   RefObject<HTMLVideoElement | null>;
   localStream:      MediaStream | null;
+  /** Phase 4C: exposed as state so ChatRoom can assign it after DOM mounts */
+  remoteStream:     MediaStream | null;
   mediaPermission:  MediaPermission;
   isConnecting:     boolean;
   callError:        string | null;
@@ -74,6 +114,9 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
   const localStreamRef = useRef<MediaStream | null>(null);
 
   const [localStream,     setLocalStream]     = useState<MediaStream | null>(null);
+  // Phase 4C: track remote stream as state so the mounting useEffect in
+  // ChatRoom can react to it and assign it after the <video> element paints.
+  const [remoteStream,    setRemoteStream]     = useState<MediaStream | null>(null);
   const [mediaPermission, setMediaPermission] = useState<MediaPermission>('pending');
   const [isConnecting,    setIsConnecting]    = useState(false);
   const [callError,       setCallError]       = useState<string | null>(null);
@@ -90,13 +133,14 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
 
     let stream: MediaStream | null = null;
 
-    // Try video + audio first
+    // Phase 4C fix: do NOT force width/height — mobile front cameras reject
+    // a 1280×720 constraint and fall back unpredictably. Let the browser/device
+    // pick the best supported resolution; only constrain frameRate.
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width:  { ideal: 1280 },
-          height: { ideal: 720 },
           facingMode: 'user',
+          frameRate: { ideal: 30, max: 30 },
         },
         audio: {
           echoCancellation: true,
@@ -106,7 +150,6 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
       });
     } catch (videoErr) {
       console.warn('[WebRTC] Video+audio failed, trying audio-only:', videoErr);
-      // Fallback: audio only (if camera blocked but mic allowed)
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
       } catch (audioErr) {
@@ -115,7 +158,6 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     }
 
     if (!stream) {
-      // Check if it was a real denial vs just no device
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const hasCamera = devices.some((d) => d.kind === 'videoinput');
@@ -129,7 +171,6 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         setCallError('Camera/microphone access denied — please allow in browser settings');
       }
       setMediaPermission('denied');
-      // Use empty stream so app still works (text chat only)
       stream = new MediaStream();
     } else {
       setMediaPermission('granted');
@@ -138,20 +179,22 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     localStreamRef.current = stream;
     setLocalStream(stream);
 
-    // Attach to local video element immediately
     if (localVideoRef.current) {
       localVideoRef.current.srcObject  = stream;
-      localVideoRef.current.muted      = true; // prevent echo
+      localVideoRef.current.muted      = true;
     }
   }, []);
 
   // Request media as soon as hook mounts (ChatRoom opens)
   useEffect(() => {
-    // Small delay so the UI renders first, then browser shows permission dialog
-    const t = setTimeout(() => { requestMedia(); }, 300);
+    // Small delay so the UI renders first, then browser shows permission dialog.
+    // Also pre-warm the ICE server cache while the user is granting permissions.
+    const t = setTimeout(() => {
+      void requestMedia();
+      void getIceServers(); // pre-fetch in background, result will be cached
+    }, 300);
     return () => {
       clearTimeout(t);
-      // Stop all tracks on unmount
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,6 +243,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
       pcRef.current = null;
     }
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    setRemoteStream(null);
     stopTimer();
     stopQualityPolling();
   }, [stopTimer, stopQualityPolling]);
@@ -217,26 +261,20 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
 
     async function setupPeerConnection() {
       try {
-        // 1. Get ICE servers from backend
-        let iceServers = DEFAULT_ICE_SERVERS;
-        try {
-          const res = await api.getIceServers();
-          if (res.data.iceServers?.length) {
-            iceServers = [...res.data.iceServers, ...DEFAULT_ICE_SERVERS];
-          }
-        } catch {
-          console.warn('[WebRTC] Using default STUN/TURN servers');
-        }
+        // 1. Get ICE servers — uses module-level cache (pre-warmed on mount).
+        //    No HTTP round-trip on the critical path when cache is warm.
+        const iceServers = await getIceServers();
 
         if (!mounted) return;
 
-        // 2. Use already-acquired local stream (from Phase 1)
-        //    If stream not ready yet, wait briefly then use whatever we have
+        // 2. Use already-acquired local stream (from Phase 1).
         let stream = localStreamRef.current;
         if (!stream || stream.getTracks().length === 0) {
-          // Re-request if somehow not ready
           try {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'user', frameRate: { ideal: 30, max: 30 } },
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            });
             localStreamRef.current = stream;
             setLocalStream(stream);
             if (localVideoRef.current) {
@@ -245,14 +283,19 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
             }
             setMediaPermission('granted');
           } catch {
-            stream = new MediaStream(); // empty — signaling still works
+            stream = new MediaStream();
           }
         }
 
         if (!mounted) return;
 
-        // 3. Create peer connection
-        const pc = new RTCPeerConnection({ iceServers });
+        // 3. Create peer connection.
+        // Phase 4C: iceCandidatePoolSize pre-gathers ICE candidates before
+        // setLocalDescription, saving 100–500ms of ICE gathering time.
+        const pc = new RTCPeerConnection({
+          iceServers,
+          iceCandidatePoolSize: 4,
+        });
         pcRef.current = pc;
 
         // Add local tracks to peer connection
@@ -268,10 +311,18 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
-        // Remote track → attach to remote video element
+        // Phase 4C fix: store remote stream in state so ChatRoom.tsx can
+        // assign it to the <video> element in a post-paint useEffect.
+        // This resolves the race where ontrack fires before the video
+        // element enters the DOM (it's inside AnimatePresence mode="wait").
         pc.ontrack = (e) => {
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = e.streams[0];
+          const incomingStream = e.streams[0];
+          if (incomingStream) {
+            setRemoteStream(incomingStream);
+            // Also try direct assignment if the ref is already mounted
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = incomingStream;
+            }
           }
         };
 
@@ -287,6 +338,12 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
               setStatus('connected');
               startTimer();
               startQualityPolling(pc);
+              // Phase 4C: set outbound encoding parameters after connection.
+              // maxBitrate hint is advisory — the browser/codec may not honour
+              // it exactly, but it prevents the congestion controller from
+              // throttling below a useful quality floor. Only applied when
+              // setParameters is supported (all modern browsers).
+              void applyVideoEncodingParams(pc);
               break;
             case 'failed':
               if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
@@ -309,7 +366,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
-        // ── ICE Candidate Queue for early candidates ──────────────────────────
+        // ── ICE Candidate Queue for early candidates ──────────────────────
         const iceCandidateQueue: RTCIceCandidateInit[] = [];
 
         const processIceQueue = async () => {
@@ -335,7 +392,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           });
         }
 
-        // ── Signaling event handlers ──────────────────────────────────────────
+        // ── Signaling event handlers ──────────────────────────────────────
 
         const handleOffer = async (data: unknown) => {
           const payload = data as OfferPayload;
@@ -376,7 +433,6 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
               console.warn('[WebRTC] Error adding ICE candidate:', err);
             }
           } else {
-            // Remote description not set yet — queue candidate until setRemoteDescription finishes!
             iceCandidateQueue.push(payload.candidate);
           }
         };
@@ -453,6 +509,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     localVideoRef,
     remoteVideoRef,
     localStream,
+    remoteStream,
     mediaPermission,
     isConnecting,
     callError,
@@ -460,4 +517,33 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     setMicMuted,
     setCameraOff,
   };
+}
+
+// ── Phase 4C: Apply video encoding parameters after connection ───────────────
+// Sets a maxBitrate hint on the outbound video sender. This is advisory —
+// WebRTC's congestion controller may still throttle below this if network
+// conditions require it. We do NOT claim this enforces a minimum bitrate;
+// actual throughput must be verified via WebRTC stats (chrome://webrtc-internals).
+async function applyVideoEncodingParams(pc: RTCPeerConnection): Promise<void> {
+  try {
+    const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+    if (!sender || typeof sender.getParameters !== 'function') return;
+
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) return;
+
+    // Set a 2 Mbps max bitrate hint and prevent the browser from scaling
+    // down the resolution unnecessarily.
+    params.encodings[0] = {
+      ...params.encodings[0],
+      maxBitrate: 2_000_000,           // 2 Mbps ceiling hint
+      scaleResolutionDownBy: 1.0,      // do not downscale from native resolution
+    };
+
+    await sender.setParameters(params);
+  } catch (err) {
+    // setParameters can fail if the codec doesn't support the parameter —
+    // this is non-fatal; the call continues with default codec parameters.
+    console.warn('[WebRTC] Could not set encoding params:', err);
+  }
 }

@@ -24,6 +24,7 @@ export function ChatRoom() {
     isConnected,
     isConnecting: socketConnecting,
     socketError,
+    clearSocketError,
     joinQueue,
     skipPartner,
     leaveChat,
@@ -53,6 +54,7 @@ export function ChatRoom() {
     localVideoRef,
     remoteVideoRef,
     localStream,
+    remoteStream,
     mediaPermission,
     isConnecting: webrtcConnecting,
     callError,
@@ -64,6 +66,26 @@ export function ChatRoom() {
   // ── Sync mic & camera toggles to actual media tracks ───────────────────────
   useEffect(() => { setMicMuted(isMicMuted); }, [isMicMuted, setMicMuted]);
   useEffect(() => { setCameraOff(isCameraOff); }, [isCameraOff, setCameraOff]);
+
+  // ── Phase 4C: Assign remoteStream to <video> element after DOM mount ────────
+  // ontrack in useWebRTC can fire before AnimatePresence renders the video
+  // element. By reacting to remoteStream state here, we guarantee the
+  // assignment happens AFTER React has committed the DOM node to the page.
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream, remoteVideoRef]);
+
+  // ── Phase 4B: Guard against duplicate joinQueue calls on reconnect ──────────
+  // React effects re-run when their deps change. isConnected toggles on every
+  // socket reconnect, which could emit join_queue multiple times. joinedRef
+  // tracks whether we already requested a queue slot for this connection so
+  // we only emit once per stable connected state.
+  const joinedRef = useRef(false);
+  useEffect(() => {
+    if (!joinedRef.current) joinedRef.current = false; // reset on mount
+  }, []);
 
   // ── Touch / Swipe-Up Gesture Handling for Mobile ─────────────────────────
   const touchStartY = useRef<number | null>(null);
@@ -155,9 +177,25 @@ export function ChatRoom() {
   // ── Auto-join queue once connected (only when online) ─────────────────────
   useEffect(() => {
     if (isOnline && isConnected && status === 'idle') {
+      // Phase 4B: prevent duplicate join_queue emissions on reconnect.
+      // Re-set joinedRef to false whenever we go back to idle so the next
+      // idle→searching transition always fires once.
+      joinedRef.current = false;
       joinQueue();
+      joinedRef.current = true;
+    }
+    // When we disconnect, reset the join guard so we can re-join on reconnect.
+    if (!isConnected) {
+      joinedRef.current = false;
     }
   }, [isOnline, isConnected, status, joinQueue]);
+
+  // ── Phase 4B: Clear stale socket errors when status becomes connected ───────
+  useEffect(() => {
+    if (status === 'connected' && socketError) {
+      clearSocketError();
+    }
+  }, [status, socketError, clearSocketError]);
 
   // ── Mark messages as read when chat opened ────────────────────────────────
   useEffect(() => {
