@@ -41,6 +41,9 @@ interface CallState {
   startTimer: () => void;
   stopTimer: () => void;
 
+  /* Remote Audio */
+  isRemoteAudioMuted: boolean;
+  toggleRemoteAudio: () => void;
 
   /* Chat */
   isChatOpen: boolean;
@@ -92,6 +95,10 @@ export const useCallStore = create<CallState>((set, get) => ({
   startTimer: () => set({ callStartTime: Date.now() }),
   stopTimer: () => set({ callStartTime: null }),
 
+  // Remote audio mute — controls only local playback of the remote stream.
+  // Does NOT send any Socket.IO event, does NOT modify the remote track.
+  isRemoteAudioMuted: false,
+  toggleRemoteAudio: () => set((s) => ({ isRemoteAudioMuted: !s.isRemoteAudioMuted })),
 
   isChatOpen: false,
   messages: [],
@@ -135,6 +142,8 @@ export const useCallStore = create<CallState>((set, get) => ({
       rtt: 0,
       packetLoss: 0,
       callStartTime: null,
+      // Reset remote audio mute on every new call
+      isRemoteAudioMuted: false,
       isChatOpen: false,
       messages: [],
       unreadCount: 0,

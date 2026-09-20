@@ -59,4 +59,64 @@ describe('callStore', () => {
     expect(resetState.isMicMuted).toBe(false);
     expect(resetState.callStartTime).toBeNull();
   });
+
+  // ── Phase 4F: Remote audio mute tests ─────────────────────────────────────
+
+  it('isRemoteAudioMuted initializes to false', () => {
+    const state = useCallStore.getState();
+    expect(state.isRemoteAudioMuted).toBe(false);
+  });
+
+  it('toggleRemoteAudio toggles isRemoteAudioMuted', () => {
+    const store = useCallStore.getState();
+
+    store.toggleRemoteAudio();
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(true);
+
+    store.toggleRemoteAudio();
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(false);
+  });
+
+  it('resetCall resets isRemoteAudioMuted to false', () => {
+    const store = useCallStore.getState();
+    store.toggleRemoteAudio(); // mute remote
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(true);
+
+    store.resetCall();
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(false);
+  });
+
+  it('remote audio and mic are independent toggles', () => {
+    const store = useCallStore.getState();
+
+    // Mute remote audio
+    store.toggleRemoteAudio();
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(true);
+    expect(useCallStore.getState().isMicMuted).toBe(false); // unaffected
+
+    // Mute mic
+    store.toggleMic();
+    expect(useCallStore.getState().isMicMuted).toBe(true);
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(true); // still muted
+
+    // Unmute remote audio
+    store.toggleRemoteAudio();
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(false);
+    expect(useCallStore.getState().isMicMuted).toBe(true); // still muted
+  });
+
+  it('remote audio and camera are independent toggles', () => {
+    const store = useCallStore.getState();
+
+    store.toggleRemoteAudio();
+    store.toggleCamera();
+
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(true);
+    expect(useCallStore.getState().isCameraOff).toBe(true);
+
+    // Unmute only remote audio
+    store.toggleRemoteAudio();
+    expect(useCallStore.getState().isRemoteAudioMuted).toBe(false);
+    expect(useCallStore.getState().isCameraOff).toBe(true); // unchanged
+  });
 });

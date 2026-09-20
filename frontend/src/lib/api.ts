@@ -1,36 +1,69 @@
 /**
  * HTTP API client for Video Chat backend
- * Base URL is proxied via Vite in dev, same-origin in prod
+ *
+ * URL strategy (single source of truth: VITE_BACKEND_URL):
+ *   Dev  (VITE_BACKEND_URL is localhost): use relative path → Vite proxy handles it,
+ *         no cross-origin request, no CORS needed.
+ *   Prod (VITE_BACKEND_URL is a real https:// URL): use full configured backend URL.
+ *         Vite proxy is not running; the browser makes a cross-origin request
+ *         and the backend CORS handles it.
+ *
+ * VITE_API_URL is accepted as a legacy fallback for backward compatibility,
+ * but VITE_BACKEND_URL is the canonical variable and takes precedence.
  */
 
-// URL strategy:
-//   Dev  (VITE_API_URL is localhost): use relative path → Vite proxy handles it,
-//         no cross-origin request, no CORS needed.
-//   Prod (VITE_API_URL is a real https:// URL): use the full configured URL.
-//         Vite proxy is not running; the browser makes a cross-origin request
-//         and the backend CORS handles it.
-const _configuredApiUrl = import.meta.env.VITE_API_URL;
-const _isApiUrlLocalhost =
-  _configuredApiUrl &&
-  (_configuredApiUrl.includes('localhost') || _configuredApiUrl.includes('127.0.0.1'));
-const BASE: string =
-  _configuredApiUrl && !_isApiUrlLocalhost
-    ? _configuredApiUrl   // Prod: full cross-origin URL
-    : '/api/v1';           // Dev: relative → goes through Vite proxy, no CORS
+// ── URL resolution ────────────────────────────────────────────────────────────
+// Primary: VITE_BACKEND_URL (same variable as socket.ts — one source of truth)
+// Fallback: VITE_API_URL (legacy; kept for backward compatibility)
 
+function resolveApiBase(): string {
+  // Primary: derive from VITE_BACKEND_URL (mirrors socket.ts logic exactly)
+  const backendUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
+  const isBackendLocalhost =
+    backendUrl &&
+    (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1'));
+
+  if (backendUrl && !isBackendLocalhost) {
+    // Production: full cross-origin URL, strip trailing slash, append /api/v1
+    return `${backendUrl.replace(/\/$/, '')}/api/v1`;
+  }
+
+  // Legacy fallback: VITE_API_URL (may be a full URL or undefined)
+  const legacyApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+  const isLegacyLocalhost =
+    legacyApiUrl &&
+    (legacyApiUrl.includes('localhost') || legacyApiUrl.includes('127.0.0.1'));
+
+  if (legacyApiUrl && !isLegacyLocalhost) {
+    return legacyApiUrl; // Prod: full cross-origin URL from legacy var
+  }
+
+  // Dev / localhost / unset: relative path → Vite proxy → backend, no CORS
+  return '/api/v1';
+}
+
+const BASE: string = resolveApiBase();
+
+// Warn once in production if URL resolution fell back to relative path
 if (typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
-  if (!_configuredApiUrl || _isApiUrlLocalhost) {
+  if (BASE === '/api/v1') {
     console.warn(
-      `[VideoChatWeb Config Warning] VITE_API_URL is missing or set to localhost on production host (${window.location.hostname}). ` +
-      `API calls will default to relative path '${BASE}' on the static host and return HTTP 405 Method Not Allowed. ` +
-      `Please configure VITE_API_URL in your hosting platform (Vercel) environment settings.`
+      `[VideoChatWeb Config Warning] Neither VITE_BACKEND_URL nor VITE_API_URL ` +
+      `is configured as a production URL on host '${window.location.hostname}'. ` +
+      `API calls will use relative path '${BASE}' which will hit the static frontend ` +
+      `and return HTTP 405. Set VITE_BACKEND_URL in your Vercel environment settings ` +
+      `to the backend origin (e.g. https://video-chat-web-gluc.onrender.com).`
     );
   }
 }
 
+// ── Token helpers ─────────────────────────────────────────────────────────────
+
 function getToken(): string | null {
   return sessionStorage.getItem('vc_token');
 }
+
+// ── Internal request ──────────────────────────────────────────────────────────
 
 async function request<T>(
   method: string,
@@ -58,13 +91,17 @@ async function request<T>(
       if (!isLocalhost) {
         throw new Error(
           `Backend API not reachable (${res.status} ${res.statusText}). ` +
-          `Request hit static host '${window.location.origin}' instead of live backend server. ` +
-          `Please set VITE_API_URL in your Vercel deployment environment variables.`
+          `Request hit static host '${window.location.origin}' instead of backend server. ` +
+          `Set VITE_BACKEND_URL in your Vercel deployment environment variables ` +
+          `to the backend origin (e.g. https://video-chat-web-gluc.onrender.com).`
         );
       }
     }
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-    throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
+    throw Object.assign(
+      new Error(err?.error?.message ?? `HTTP ${res.status}`),
+      { status: res.status },
+    );
   }
 
   return res.json() as Promise<T>;
@@ -128,6 +165,10 @@ export function generateFingerprint(): string {
   return Math.abs(hash).toString(36) + Date.now().toString(36);
 }
 
+// ── Exported BASE (for tests) ─────────────────────────────────────────────────
+/** The resolved API base URL. Exported for unit testing only. */
+export { BASE as resolvedApiBase };
+
 // ── API methods ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -154,15 +195,14 @@ export const api = {
   /**
    * Get live analytics (online count) — hits /health/analytics/count
    *
-   * Derives the URL from VITE_BACKEND_URL (same localhost-safety guard as
-   * the socket client). Falls back to a same-origin relative path when:
+   * Derives the base URL from VITE_BACKEND_URL (same localhost-safety guard as
+   * the rest of this file). Falls back to a same-origin relative path when:
    *   - VITE_BACKEND_URL is not set, OR
-   *   - VITE_BACKEND_URL is a localhost URL but the page is on a real host
-   *     (dev .env accidentally shipped to production).
+   *   - VITE_BACKEND_URL is a localhost URL (dev env accidentally shipped)
    *
    * In practice:
    *   - Dev:  Vite proxy routes /health → http://localhost:3001
-   *   - Prod: VITE_BACKEND_URL=https://api.example.com → full cross-origin URL
+   *   - Prod: VITE_BACKEND_URL=https://… → full cross-origin URL
    */
   getAnalytics(): Promise<OnlineCountResponse> {
     const configuredBackend = import.meta.env.VITE_BACKEND_URL as string | undefined;
@@ -170,15 +210,10 @@ export const api = {
       configuredBackend &&
       (configuredBackend.includes('localhost') || configuredBackend.includes('127.0.0.1'));
 
-    // Same strategy as BASE above:
-    //   Dev  (localhost backend): use '' so request becomes /health/analytics/count
-    //         → Vite proxy routes /health → backend, no CORS.
-    //   Prod (real https:// backend): use full URL, browser makes cross-origin
-    //         request, backend CORS handles it.
     const analyticsBase =
       configuredBackend && !isBackendLocalhost
-        ? configuredBackend  // Prod: full cross-origin URL
-        : '';                 // Dev: relative → Vite proxy
+        ? configuredBackend.replace(/\/$/, '')  // Prod: full cross-origin URL
+        : '';                                    // Dev: relative → Vite proxy
 
     return fetch(`${analyticsBase}/health/analytics/count`)
       .then((r) => r.json()) as Promise<OnlineCountResponse>;

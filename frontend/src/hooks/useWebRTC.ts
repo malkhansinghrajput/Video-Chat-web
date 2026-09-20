@@ -18,6 +18,15 @@
  *     are not confused by a 1280×720 demand they override anyway.
  *   - Outbound encoding params set after connection (maxBitrate for VP8/VP9)
  *     where supported; guarded by setParameters existence check.
+ *
+ * Phase 4F fixes:
+ *   - ICE server fetch: on 401 attempt one session recovery then retry once.
+ *   - Camera OFF→ON: check track.readyState before re-enabling; reacquire via
+ *     getUserMedia and replaceTrack() if track has ended.
+ *   - Remote audio mute: exposed as state; applied to remoteVideoRef.
+ *   - WebRTC timing diagnostics logged (T0–T8) for debugging.
+ *   - setRemoteAudioMuted: only sets remoteVideoRef.current.muted — no signaling,
+ *     no track modification, no renegotiation.
  */
 
 import { useEffect, useRef, useCallback, useState, type RefObject } from 'react';
@@ -46,7 +55,6 @@ export type MediaPermission = 'pending' | 'granted' | 'denied' | 'requesting';
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun.services.mozilla.com' },
   { urls: 'stun:global.stun.twilio.com:3478' },
   {
     /*
@@ -71,23 +79,91 @@ let cachedIceServers: RTCIceServer[] | null = null;
 let iceCacheFetchedAt = 0;
 let iceCacheTtlMs = 60_000; // default 60s until server response received
 
+/**
+ * Phase 4F: Fetch ICE servers with one automatic session-recovery retry on 401.
+ *
+ * Failure classification:
+ *   - 401: session token missing/expired → attempt recovery → retry once
+ *   - Other API failure: log + fall back to STUN-only defaults
+ *   - Cache hit: return immediately (no HTTP round-trip)
+ *
+ * SECURITY: Never log TURN credentials, session tokens, or Authorization headers.
+ */
 async function getIceServers(): Promise<RTCIceServer[]> {
   const now = Date.now();
   if (cachedIceServers && (now - iceCacheFetchedAt) < iceCacheTtlMs) {
     return cachedIceServers;
   }
-  try {
-    const res = await api.getIceServers();
-    if (res.data.iceServers?.length) {
-      cachedIceServers = [...res.data.iceServers, ...DEFAULT_ICE_SERVERS];
-      iceCacheTtlMs = (res.data.ttl ?? 60) * 1000;
-      iceCacheFetchedAt = now;
-      return cachedIceServers;
+
+  const tryFetch = async (): Promise<RTCIceServer[] | null> => {
+    try {
+      console.log('[ICE] fetch start');
+      const res = await api.getIceServers();
+      if (res.data.iceServers?.length) {
+        cachedIceServers = [...res.data.iceServers, ...DEFAULT_ICE_SERVERS];
+        iceCacheTtlMs = (res.data.ttl ?? 60) * 1000;
+        iceCacheFetchedAt = Date.now();
+        console.log('[ICE] fetch success');
+        return cachedIceServers;
+      }
+      return null;
+    } catch (err) {
+      // Check if it's a 401 — need to signal that to caller
+      const status = (err as { status?: number }).status;
+      if (status === 401) {
+        console.log('[ICE] unauthorized');
+        throw Object.assign(new Error('ICE_UNAUTHORIZED'), { status: 401 });
+      }
+      console.warn('[WebRTC] ICE server fetch failed, using defaults');
+      return null;
     }
-  } catch {
-    console.warn('[WebRTC] ICE server fetch failed, using defaults');
+  };
+
+  try {
+    const result = await tryFetch();
+    if (result) return result;
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 401) {
+      // Phase 4F: session recovery on 401 — try to re-init session once
+      console.log('[ICE] session recovery');
+      try {
+        // Try validating first — if it fails, create a fresh session
+        try {
+          await api.validateSession();
+        } catch {
+          // Token is invalid/expired — create a new session
+          const initRes = await api.initSession();
+          sessionStorage.setItem('vc_token', initRes.data.token);
+          sessionStorage.setItem('vc_session', JSON.stringify({
+            sessionId: initRes.data.sessionId,
+            token: initRes.data.token,
+            country: initRes.data.country,
+          }));
+          console.log('[SESSION] init success');
+        }
+        // Retry ICE fetch exactly once after recovery
+        const retryResult = await tryFetch();
+        if (retryResult) {
+          console.log('[ICE] retry success');
+          return retryResult;
+        }
+      } catch {
+        // Recovery + retry both failed — use STUN-only defaults
+        console.warn('[WebRTC] ICE session recovery failed, using STUN defaults only');
+      }
+    }
   }
+
+  // Intentional STUN fallback: log clearly (not silently hiding)
+  console.warn('[WebRTC] ICE server fetch failed, using STUN defaults only');
   return DEFAULT_ICE_SERVERS;
+}
+
+/** Invalidate the ICE cache (call when session changes) */
+export function invalidateIceCache(): void {
+  cachedIceServers = null;
+  iceCacheFetchedAt = 0;
 }
 
 export interface UseWebRTCReturn {
@@ -103,8 +179,19 @@ export interface UseWebRTCReturn {
   requestMedia:     () => Promise<void>;
   /** Apply mic mute to local stream track */
   setMicMuted:      (muted: boolean) => void;
-  /** Apply camera off to local stream track */
-  setCameraOff:     (off: boolean) => void;
+  /**
+   * Apply camera off/on to local stream track.
+   * Phase 4F: if the video track has ended (e.g. after OS revocation or
+   * mobile lifecycle), re-acquires camera via getUserMedia and calls
+   * replaceTrack() on the RTCPeerConnection sender — no PeerConnection recreated.
+   */
+  setCameraOff:     (off: boolean) => Promise<void>;
+  /**
+   * Control local playback of remote audio.
+   * Phase 4F: ONLY sets remoteVideoRef.current.muted — no Socket.IO event,
+   * no remote track modification, no renegotiation.
+   */
+  setRemoteAudioMuted: (muted: boolean) => void;
 }
 
 export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
@@ -259,11 +346,17 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     setIsConnecting(true);
     setCallError(null);
 
+    // Phase 4F timing diagnostics
+    const T0 = Date.now();
+    console.log(`[WebRTC] T0 match received at ${T0}`);
+
     async function setupPeerConnection() {
       try {
         // 1. Get ICE servers — uses module-level cache (pre-warmed on mount).
-        //    No HTTP round-trip on the critical path when cache is warm.
+        //    Phase 4F: includes 401 recovery retry internally.
         const iceServers = await getIceServers();
+        const T1 = Date.now();
+        console.log(`[WebRTC] T1 ICE servers ready: ${T1 - T0}ms`);
 
         if (!mounted) return;
 
@@ -286,6 +379,8 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
             stream = new MediaStream();
           }
         }
+        const T2 = Date.now();
+        console.log(`[WebRTC] T2 local media ready: ${T2 - T0}ms`);
 
         if (!mounted) return;
 
@@ -318,6 +413,8 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         pc.ontrack = (e) => {
           const incomingStream = e.streams[0];
           if (incomingStream) {
+            const T7 = Date.now();
+            console.log(`[WebRTC] T7 remote track received: ${T7 - T0}ms`);
             setRemoteStream(incomingStream);
             // Also try direct assignment if the ref is already mounted
             if (remoteVideoRef.current) {
@@ -332,19 +429,18 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         pc.onconnectionstatechange = () => {
           if (!mounted) return;
           switch (pc.connectionState) {
-            case 'connected':
+            case 'connected': {
+              const T6 = Date.now();
+              console.log(`[WebRTC] T6 ICE connected: ${T6 - T0}ms`);
               if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
               setIsConnecting(false);
               setStatus('connected');
               startTimer();
               startQualityPolling(pc);
               // Phase 4C: set outbound encoding parameters after connection.
-              // maxBitrate hint is advisory — the browser/codec may not honour
-              // it exactly, but it prevents the congestion controller from
-              // throttling below a useful quality floor. Only applied when
-              // setParameters is supported (all modern browsers).
               void applyVideoEncodingParams(pc);
               break;
+            }
             case 'failed':
               if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
               setCallError('Connection failed — try skipping to next partner');
@@ -386,10 +482,14 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         if (matchInfo!.role === 'initiator') {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
+          const T3 = Date.now();
+          console.log(`[WebRTC] T3 offer created+set: ${T3 - T0}ms`);
           socket!.emit(SocketEvents.WEBRTC_OFFER, {
             roomId: matchInfo!.roomId,
             sdp:    offer,
           });
+          const T4 = Date.now();
+          console.log(`[WebRTC] T4 offer sent: ${T4 - T0}ms`);
         }
 
         // ── Signaling event handlers ──────────────────────────────────────
@@ -402,6 +502,8 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
             await processIceQueue();
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
+            const T5 = Date.now();
+            console.log(`[WebRTC] T5 answer sent (responder): ${T5 - T0}ms`);
             socket!.emit(SocketEvents.WEBRTC_ANSWER, {
               roomId: matchInfo!.roomId,
               sdp:    answer,
@@ -417,6 +519,8 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           if (pc.signalingState !== 'have-local-offer') return;
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+            const T5 = Date.now();
+            console.log(`[WebRTC] T5 answer received (initiator): ${T5 - T0}ms`);
             await processIceQueue();
           } catch (err) {
             console.error('[WebRTC] Error handling answer:', err);
@@ -501,8 +605,105 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     localStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
   }, []);
 
-  const setCameraOff = useCallback((off: boolean) => {
-    localStreamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !off; });
+  /**
+   * Phase 4F camera lifecycle fix:
+   *
+   * When turning camera OFF: disable the video track (track remains alive).
+   * When turning camera ON:
+   *   1. If the track is still live (readyState === 'live'), just re-enable it.
+   *   2. If the track has ended (OS revoked permission, mobile lifecycle,
+   *      device change, etc.), acquire a new track via getUserMedia and
+   *      replaceTrack() on the RTCPeerConnection sender — no renegotiation needed.
+   *
+   * Does NOT destroy the PeerConnection.
+   * Does NOT renegotiate.
+   * Does NOT create a second PeerConnection.
+   */
+  const setCameraOff = useCallback(async (off: boolean) => {
+    if (off) {
+      // Simply disable the video track — keeps the sender alive
+      localStreamRef.current?.getVideoTracks().forEach((t) => { t.enabled = false; });
+      return;
+    }
+
+    // Turning ON: check if the existing track is still alive
+    const existingTrack = localStreamRef.current?.getVideoTracks()[0];
+
+    if (existingTrack && existingTrack.readyState === 'live') {
+      // Track still usable — just re-enable it
+      existingTrack.enabled = true;
+      // Re-attach to local video element if needed
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.muted = true;
+      }
+      return;
+    }
+
+    // Track has ended (revoked/mobile lifecycle) — reacquire camera
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          frameRate: { ideal: 30, max: 30 },
+        },
+      });
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (!newVideoTrack) return;
+
+      // Replace track in the local stream object
+      if (localStreamRef.current) {
+        // Remove old (ended) video tracks, add new one
+        localStreamRef.current.getVideoTracks().forEach((t) => {
+          localStreamRef.current!.removeTrack(t);
+          t.stop();
+        });
+        localStreamRef.current.addTrack(newVideoTrack);
+      } else {
+        // Build a new stream that includes the existing audio tracks + new video
+        const audioTracks = localStreamRef.current
+          ? [] // handled above
+          : [];
+        const combined = new MediaStream([newVideoTrack, ...audioTracks]);
+        localStreamRef.current = combined;
+        setLocalStream(combined);
+      }
+
+      // Update local video element
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.muted = true;
+      }
+
+      // Phase 4F: Replace track on RTCPeerConnection sender — no renegotiation needed
+      if (pcRef.current) {
+        const sender = pcRef.current.getSenders().find((s) => s.track?.kind === 'video');
+        if (sender) {
+          try {
+            await sender.replaceTrack(newVideoTrack);
+          } catch (err) {
+            console.warn('[WebRTC] replaceTrack failed:', err);
+          }
+        }
+      }
+
+      setMediaPermission('granted');
+    } catch (err) {
+      console.warn('[WebRTC] Camera reacquisition failed:', err);
+      setCallError('Failed to reactivate camera — check browser permissions');
+      setMediaPermission('denied');
+    }
+  }, []);
+
+  /**
+   * Phase 4F: Remote audio mute control.
+   * ONLY sets remoteVideoRef.current.muted — local playback only.
+   * No Socket.IO event. No track modification. No renegotiation.
+   */
+  const setRemoteAudioMuted = useCallback((muted: boolean) => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.muted = muted;
+    }
   }, []);
 
   return {
@@ -516,6 +717,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
     requestMedia,
     setMicMuted,
     setCameraOff,
+    setRemoteAudioMuted,
   };
 }
 

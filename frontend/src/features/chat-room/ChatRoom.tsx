@@ -36,6 +36,7 @@ export function ChatRoom() {
   const matchInfo = useCallStore((s) => s.matchInfo);
   const isMicMuted = useCallStore((s) => s.isMicMuted);
   const isCameraOff = useCallStore((s) => s.isCameraOff);
+  const isRemoteAudioMuted = useCallStore((s) => s.isRemoteAudioMuted);
   const connectionQuality = useCallStore((s) => s.connectionQuality);
   const rtt = useCallStore((s) => s.rtt);
   const messages = useCallStore((s) => s.messages);
@@ -46,6 +47,7 @@ export function ChatRoom() {
   const toggleMic = useCallStore((s) => s.toggleMic);
   const toggleCamera = useCallStore((s) => s.toggleCamera);
   const toggleChat = useCallStore((s) => s.toggleChat);
+  const toggleRemoteAudio = useCallStore((s) => s.toggleRemoteAudio);
   const addMessage = useCallStore((s) => s.addMessage);
   const markRead = useCallStore((s) => s.markRead);
 
@@ -61,11 +63,19 @@ export function ChatRoom() {
     requestMedia,
     setMicMuted,
     setCameraOff,
+    setRemoteAudioMuted,
   } = useWebRTC(matchInfo);
 
   // ── Sync mic & camera toggles to actual media tracks ───────────────────────
   useEffect(() => { setMicMuted(isMicMuted); }, [isMicMuted, setMicMuted]);
-  useEffect(() => { setCameraOff(isCameraOff); }, [isCameraOff, setCameraOff]);
+  useEffect(() => { void setCameraOff(isCameraOff); }, [isCameraOff, setCameraOff]);
+
+  // ── Phase 4F: Sync remote audio mute state to video element ─────────────────
+  // Applied on every change to isRemoteAudioMuted AND whenever remoteStream
+  // changes (new match → new element mount → re-apply current mute state).
+  useEffect(() => {
+    setRemoteAudioMuted(isRemoteAudioMuted);
+  }, [isRemoteAudioMuted, setRemoteAudioMuted]);
 
   // ── Phase 4C: Assign remoteStream to <video> element after DOM mount ────────
   // ontrack in useWebRTC can fire before AnimatePresence renders the video
@@ -74,18 +84,48 @@ export function ChatRoom() {
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
+      // Phase 4F: re-apply speaker mute state after stream assignment
+      remoteVideoRef.current.muted = isRemoteAudioMuted;
     }
-  }, [remoteStream, remoteVideoRef]);
+  }, [remoteStream, remoteVideoRef, isRemoteAudioMuted]);
 
-  // ── Phase 4B: Guard against duplicate joinQueue calls on reconnect ──────────
-  // React effects re-run when their deps change. isConnected toggles on every
-  // socket reconnect, which could emit join_queue multiple times. joinedRef
-  // tracks whether we already requested a queue slot for this connection so
-  // we only emit once per stable connected state.
-  const joinedRef = useRef(false);
+  // ── Phase 4F: Local video srcObject re-assignment on element remount ────────
+  // The local <video> is conditionally rendered (hidden when camera off).
+  // When the DOM node remounts after camera ON, localVideoRef.current changes
+  // but the 'localStream' state value hasn't changed — so the useEffect in
+  // useWebRTC that assigns srcObject doesn't re-fire. Fix: use a callback ref
+  // so assignment runs every time the node mounts (including remounts).
+  const localVideoCallbackRef = useCallback((node: HTMLVideoElement | null) => {
+    // Assign the ref so useWebRTC can still use it for srcObject updates
+    (localVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = node;
+    // Immediately assign the stream when the DOM node appears
+    if (node && localStream) {
+      node.srcObject = localStream;
+      node.muted = true;
+    }
+  }, [localStream, localVideoRef]);
+
+  // ── Auto-join queue once connected (only when online) ─────────────────────
+  // Phase 4F: The joinQueue() function in useSocket is now guarded by a
+  // queue phase state machine. Calling it when already joining/searching/matched
+  // is a no-op. We can safely call it here without additional ref guards.
   useEffect(() => {
-    if (!joinedRef.current) joinedRef.current = false; // reset on mount
-  }, []);
+    if (isOnline && isConnected && status === 'idle') {
+      joinQueue();
+    }
+  }, [isOnline, isConnected, status, joinQueue]);
+
+  // ── Phase 4B: Clear stale socket errors when status becomes connected ───────
+  useEffect(() => {
+    if (status === 'connected' && socketError) {
+      clearSocketError();
+    }
+  }, [status, socketError, clearSocketError]);
+
+  // ── Mark messages as read when chat opened ────────────────────────────────
+  useEffect(() => {
+    if (isChatOpen) markRead();
+  }, [isChatOpen, markRead]);
 
   // ── Touch / Swipe-Up Gesture Handling for Mobile ─────────────────────────
   const touchStartY = useRef<number | null>(null);
@@ -129,7 +169,7 @@ export function ChatRoom() {
     touchStartY.current = null;
     touchStartX.current = null;
 
-    // Trigger swipe if user swiped UP by >50px, vertical displacement > horizontal, within 600ms
+    // Trigger swipe if user swiped UP by >50px, vertical displacement >horizontal, within 600ms
     if (deltaY > 50 && deltaY > deltaX * 1.1 && deltaTime < 600) {
       triggerNextWithFeedback();
     }
@@ -174,34 +214,6 @@ export function ChatRoom() {
     return () => window.removeEventListener('resize', updateBounds);
   }, []);
 
-  // ── Auto-join queue once connected (only when online) ─────────────────────
-  useEffect(() => {
-    if (isOnline && isConnected && status === 'idle') {
-      // Phase 4B: prevent duplicate join_queue emissions on reconnect.
-      // Re-set joinedRef to false whenever we go back to idle so the next
-      // idle→searching transition always fires once.
-      joinedRef.current = false;
-      joinQueue();
-      joinedRef.current = true;
-    }
-    // When we disconnect, reset the join guard so we can re-join on reconnect.
-    if (!isConnected) {
-      joinedRef.current = false;
-    }
-  }, [isOnline, isConnected, status, joinQueue]);
-
-  // ── Phase 4B: Clear stale socket errors when status becomes connected ───────
-  useEffect(() => {
-    if (status === 'connected' && socketError) {
-      clearSocketError();
-    }
-  }, [status, socketError, clearSocketError]);
-
-  // ── Mark messages as read when chat opened ────────────────────────────────
-  useEffect(() => {
-    if (isChatOpen) markRead();
-  }, [isChatOpen, markRead]);
-
   // ── Realtime 1-Second Call Timer Tick ────────────────────────────────────
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -242,7 +254,17 @@ export function ChatRoom() {
 
   // ── Loading / error states ────────────────────────────────────────────────
   const isLoading = sessionStatus === 'loading' || socketConnecting;
-  const error = socketError ?? callError;
+
+  // Phase 4F: never show transient queue errors when actively searching.
+  // The socketError from useSocket already filters ALREADY_IN_QUEUE silently,
+  // but if any slips through while searching/connected, suppress the banner.
+  const isActivelyEngaged = status === 'searching' || status === 'matched' || status === 'connected' || status === 'reconnecting';
+  const isTransientError = socketError && (
+    socketError.includes('Already in queue') ||
+    socketError.includes('Too many queue') ||
+    socketError.includes('Session is not available')
+  );
+  const error = (isActivelyEngaged && isTransientError) ? null : (socketError ?? callError);
 
   const isSearching = status === 'searching' || (isConnected && status === 'idle');
   const isInCall = status === 'matched' || status === 'connected' || status === 'reconnecting';
@@ -369,7 +391,7 @@ export function ChatRoom() {
         )}
       </AnimatePresence>
 
-      {/* Error Banner */}
+      {/* Error Banner — Phase 4F: only actionable errors */}
       <AnimatePresence>
         {error && (
           <motion.div
@@ -453,7 +475,10 @@ export function ChatRoom() {
         )}
       </AnimatePresence>
 
-      {/* Local Video Preview */}
+      {/* Local Video Preview
+          Phase 4F: keep <video> always mounted (just visually hidden when camera off)
+          so localVideoRef always points to a valid DOM node. This prevents the
+          srcObject assignment race when camera turns back ON. */}
       <motion.div
         className={styles.localVideo}
         drag
@@ -461,15 +486,23 @@ export function ChatRoom() {
         dragElastic={0.1}
         whileDrag={{ scale: 1.05 }}
       >
-        {localStream && !isCameraOff ? (
-          <video
-            ref={localVideoRef}
-            autoPlay
-            playsInline
-            muted
-            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
-          />
-        ) : (
+        {/* Always keep the video element mounted — hide it when camera is off */}
+        <video
+          ref={localVideoCallbackRef}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            borderRadius: 'inherit',
+            // Phase 4F: hide (not unmount) when camera is off to keep DOM node alive
+            display: isCameraOff || !localStream ? 'none' : 'block',
+          }}
+        />
+        {/* Placeholder shown when camera is off or stream not yet acquired */}
+        {(isCameraOff || !localStream) && (
           <div style={{
             width: '100%', height: '100%',
             background: '#222',
@@ -509,25 +542,38 @@ export function ChatRoom() {
           icon={isMicMuted ? '🔇' : '🎤'}
           tooltip={isMicMuted ? 'Unmute Mic' : 'Mute Mic'}
           aria-pressed={isMicMuted}
+          aria-label={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
           onClick={toggleMic}
         />
         <IconButton
           icon={isCameraOff ? '📷' : '🎥'}
           tooltip={isCameraOff ? 'Turn Camera On' : 'Turn Camera Off'}
           aria-pressed={isCameraOff}
+          aria-label={isCameraOff ? 'Turn camera on' : 'Turn camera off'}
           onClick={toggleCamera}
+        />
+        {/* Phase 4F: Remote speaker mute/unmute button
+            Controls ONLY local playback — no Socket.IO, no track modification */}
+        <IconButton
+          icon={isRemoteAudioMuted ? '🔇' : '🔊'}
+          tooltip={isRemoteAudioMuted ? 'Unmute remote audio' : 'Mute remote audio'}
+          aria-pressed={isRemoteAudioMuted}
+          aria-label={isRemoteAudioMuted ? 'Unmute remote audio' : 'Mute remote audio'}
+          onClick={toggleRemoteAudio}
         />
         <IconButton
           icon="⏭"
           size="lg"
           variant="filled"
           tooltip="Next (Space or Swipe Up)"
+          aria-label="Skip to next partner"
           onClick={handleSkip}
           disabled={!isConnected || !isOnline}
         />
         <IconButton
           icon="💬"
           tooltip="Open Chat"
+          aria-label="Open chat panel"
           badge={unreadCount > 0 ? unreadCount : undefined}
           onClick={toggleChat}
         />
@@ -535,6 +581,7 @@ export function ChatRoom() {
           icon="✖"
           variant="danger"
           tooltip="Leave"
+          aria-label="Leave chat"
           onClick={handleLeave}
         />
       </motion.div>
@@ -618,4 +665,3 @@ function ChatInput({
     </form>
   );
 }
-
