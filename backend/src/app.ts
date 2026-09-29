@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import { env } from './config/env';
+import { isOriginAllowed } from './utils/cors.util';
 import { apiRateLimiter } from './middlewares/rateLimit.middleware';
 import { correlationMiddleware, requestLoggerMiddleware, errorHandler, notFoundHandler } from './middlewares/common.middleware';
 
@@ -34,11 +35,7 @@ export function createApp() {
   const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim().replace(/\/$/, ''));
   app.use(cors({
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes('*')) {
-        return cb(null, true);
-      }
-      const normalizedOrigin = origin.replace(/\/$/, '');
-      if (allowedOrigins.includes(normalizedOrigin)) {
+      if (isOriginAllowed(origin, allowedOrigins)) {
         return cb(null, true);
       }
       cb(new Error('Not allowed by CORS'));

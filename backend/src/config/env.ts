@@ -149,7 +149,7 @@ export const env = {
   NONCE_TTL_SECONDS: optionalInt('NONCE_TTL_SECONDS', 60),
 
   // CORS
-  CORS_ORIGIN: corsOrigin('CORS_ORIGIN', 'http://localhost:5173,http://localhost:3000'),
+  CORS_ORIGIN: corsOrigin('CORS_ORIGIN', 'http://localhost:5173,http://localhost:3000,http://localhost:3001,https://*.vercel.app,https://*.onrender.com'),
 
   // MongoDB
   MONGODB_URI: optional('MONGODB_URI', 'mongodb://localhost:27017/videochat_dev'),

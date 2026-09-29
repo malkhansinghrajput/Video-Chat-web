@@ -9,6 +9,7 @@ import { registerConnectionHandlers, clearAllDisconnectTimers } from './sockets/
 import { socketAuthMiddleware } from './middlewares/auth.middleware';
 import { logger } from './config/logger';
 import { env } from './config/env';
+import { isOriginAllowed } from './utils/cors.util';
 
 // _____________________________________________
 // Bootstrap Function
@@ -41,20 +42,15 @@ async function bootstrap(): Promise<void> {
 
   // Build the allowed origins list from CORS_ORIGIN env var.
   const corsOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim().replace(/\/$/, ''));
-  const hasWildcard = corsOrigins.includes('*');
 
-  // Socket.IO CORS logic with origin normalization
-  const socketCorsOrigin = hasWildcard
-    ? true
-    : (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-        if (!origin) return cb(null, true);
-        const normalized = origin.replace(/\/$/, '');
-        if (corsOrigins.includes(normalized)) {
-          cb(null, true);
-        } else {
-          cb(new Error('Not allowed by CORS'));
-        }
-      };
+  // Socket.IO CORS logic with origin pattern validation
+  const socketCorsOrigin = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (isOriginAllowed(origin, corsOrigins)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Not allowed by CORS'));
+    }
+  };
 
   // Socket.IO Server
   const io = new SocketServer(httpServer, {
