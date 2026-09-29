@@ -1,4 +1,4 @@
-﻿import type { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { sessionService } from '../services/session.service';
 import { getIpHash, detectCountry } from '../utils/geo.util';
 import { hashSensitiveData } from '../utils/token.util';
@@ -123,9 +123,21 @@ export class SessionController {
         username: credentials.username,
         credential: credentials.credential,
       });
-    } else if (turnUrls.length > 0 && isLocalhost && env.NODE_ENV === 'production') {
-      logger.warn('SessionController: TURN_SERVER_URLS contains localhost - TURN excluded from ICE config', {
-        urls: turnUrls,
+    } else {
+      if (isLocalhost && env.NODE_ENV === 'production') {
+        logger.warn('SessionController: TURN_SERVER_URLS contains localhost - using public fallback TURN server for production P2P relay', {
+          urls: turnUrls,
+        });
+      }
+      // Public fallback TURN servers (Metered OpenRelay) to ensure mobile carrier NAT (4G/5G) connections succeed
+      iceServers.push({
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turns:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelay',
+        credential: 'openrelay',
       });
     }
 

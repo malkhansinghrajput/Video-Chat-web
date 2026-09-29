@@ -199,6 +199,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pcRef          = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
 
   const [localStream,     setLocalStream]     = useState<MediaStream | null>(null);
   // Phase 4C: track remote stream as state so the mounting useEffect in
@@ -329,6 +330,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
       pcRef.current.close();
       pcRef.current = null;
     }
+    remoteStreamRef.current = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     setRemoteStream(null);
     stopTimer();
@@ -406,29 +408,41 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
-        // Phase 4C/4G fix: Store remote stream in state using a new MediaStream reference
-        // so React detects track additions (e.g. video arriving after audio) and triggers
-        // re-assignment and play() in ChatRoom.tsx even on mobile browsers.
+        // Phase 4C/4G fix: Safely maintain remote stream using a persistent MediaStream reference
+        // so track additions (e.g. video arriving after audio) add to the active stream
+        // without re-creating MediaStream or re-assigning srcObject (which interrupts video play()).
         pc.ontrack = (e) => {
-          let incomingStream = e.streams[0];
-          if (!incomingStream) {
-            incomingStream = new MediaStream([e.track]);
-          }
           const T7 = Date.now();
           console.log(`[WebRTC] T7 remote track received (${e.track.kind}): ${T7 - T0}ms`);
-          
-          // Create new MediaStream instance so reference changes and React state updates reliably
-          setRemoteStream(new MediaStream(incomingStream.getTracks()));
-          
+
+          if (!remoteStreamRef.current) {
+            remoteStreamRef.current = e.streams[0]
+              ? new MediaStream(e.streams[0].getTracks())
+              : new MediaStream([e.track]);
+          } else {
+            if (!remoteStreamRef.current.getTracks().some((t) => t.id === e.track.id)) {
+              remoteStreamRef.current.addTrack(e.track);
+            }
+          }
+
+          const streamToAssign = remoteStreamRef.current;
+          setRemoteStream(streamToAssign);
+
           if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = incomingStream;
-            remoteVideoRef.current.play().catch((playErr) => {
-              console.warn('[WebRTC] remoteVideoRef auto-play call failed:', playErr);
-            });
+            if (remoteVideoRef.current.srcObject !== streamToAssign) {
+              remoteVideoRef.current.srcObject = streamToAssign;
+            }
+            if (remoteVideoRef.current.paused) {
+              remoteVideoRef.current.play().catch((playErr) => {
+                if (playErr.name !== 'AbortError') {
+                  console.warn('[WebRTC] remoteVideoRef auto-play call failed:', playErr);
+                }
+              });
+            }
           }
 
           e.track.onunmute = () => {
-            if (remoteVideoRef.current) {
+            if (remoteVideoRef.current && remoteVideoRef.current.paused) {
               remoteVideoRef.current.play().catch(() => {});
             }
           };

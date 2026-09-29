@@ -88,9 +88,13 @@ export function ChatRoom() {
         node.srcObject = remoteStream;
       }
       node.muted = isRemoteAudioMuted;
-      node.play().catch((err) => {
-        console.warn('[ChatRoom] remoteVideoCallbackRef play failed:', err);
-      });
+      if (node.paused) {
+        node.play().catch((err) => {
+          if (err.name !== 'AbortError') {
+            console.warn('[ChatRoom] remoteVideoCallbackRef play failed:', err);
+          }
+        });
+      }
     }
   }, [remoteStream, remoteVideoRef, isRemoteAudioMuted]);
 
@@ -100,9 +104,13 @@ export function ChatRoom() {
         remoteVideoRef.current.srcObject = remoteStream;
       }
       remoteVideoRef.current.muted = isRemoteAudioMuted;
-      remoteVideoRef.current.play().catch((err) => {
-        console.warn('[ChatRoom] remoteStream useEffect play failed:', err);
-      });
+      if (remoteVideoRef.current.paused) {
+        remoteVideoRef.current.play().catch((err) => {
+          if (err.name !== 'AbortError') {
+            console.warn('[ChatRoom] remoteStream useEffect play failed:', err);
+          }
+        });
+      }
     }
   }, [remoteStream, remoteVideoRef, isRemoteAudioMuted]);
 
