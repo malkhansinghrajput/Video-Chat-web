@@ -77,15 +77,32 @@ export function ChatRoom() {
     setRemoteAudioMuted(isRemoteAudioMuted);
   }, [isRemoteAudioMuted, setRemoteAudioMuted]);
 
-  // ── Phase 4C: Assign remoteStream to <video> element after DOM mount ────────
+  // ── Phase 4C/4G: Assign remoteStream to <video> element after DOM mount ────
   // ontrack in useWebRTC can fire before AnimatePresence renders the video
-  // element. By reacting to remoteStream state here, we guarantee the
-  // assignment happens AFTER React has committed the DOM node to the page.
+  // element. Using both callback ref and useEffect guarantees the stream is assigned
+  // and play() is called on mobile devices as soon as React commits the node.
+  const remoteVideoCallbackRef = useCallback((node: HTMLVideoElement | null) => {
+    (remoteVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = node;
+    if (node && remoteStream) {
+      if (node.srcObject !== remoteStream) {
+        node.srcObject = remoteStream;
+      }
+      node.muted = isRemoteAudioMuted;
+      node.play().catch((err) => {
+        console.warn('[ChatRoom] remoteVideoCallbackRef play failed:', err);
+      });
+    }
+  }, [remoteStream, remoteVideoRef, isRemoteAudioMuted]);
+
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      // Phase 4F: re-apply speaker mute state after stream assignment
+      if (remoteVideoRef.current.srcObject !== remoteStream) {
+        remoteVideoRef.current.srcObject = remoteStream;
+      }
       remoteVideoRef.current.muted = isRemoteAudioMuted;
+      remoteVideoRef.current.play().catch((err) => {
+        console.warn('[ChatRoom] remoteStream useEffect play failed:', err);
+      });
     }
   }, [remoteStream, remoteVideoRef, isRemoteAudioMuted]);
 
@@ -135,12 +152,13 @@ export function ChatRoom() {
 
   const triggerNextWithFeedback = useCallback(() => {
     if (!isConnected || !isOnline) return;
+    clearSocketError();
     setSwipeFeedback(true);
     skipPartner();
     setTimeout(() => {
       setSwipeFeedback(false);
     }, 700);
-  }, [isConnected, isOnline, skipPartner]);
+  }, [isConnected, isOnline, clearSocketError, skipPartner]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
@@ -178,8 +196,9 @@ export function ChatRoom() {
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleSkip = useCallback(() => {
     if (!isOnline) return;
+    clearSocketError();
     skipPartner();
-  }, [isOnline, skipPartner]);
+  }, [isOnline, clearSocketError, skipPartner]);
 
   // ── Space Key Shortcut to Skip ────────────────────────────────────────────
   useEffect(() => {
@@ -439,10 +458,16 @@ export function ChatRoom() {
                   ? 'Too many requests — please wait & refresh'
                   : sessionStatus === 'error'
                     ? 'Session error — retrying...'
-                    : 'Finding partner...'}
+                    : error && error.includes('Too many queue')
+                      ? 'Queue busy — retrying shortly...'
+                      : 'Finding partner...'}
             </motion.h2>
             <p className={styles.waitText}>
-              {isConnected ? 'Searching globally • Press Space or Swipe up to skip' : 'Establishing connection...'}
+              {error && error.includes('Too many queue')
+                ? 'Cooling down for a moment before searching'
+                : isConnected
+                  ? 'Searching globally • Press Space or Swipe up to skip'
+                  : 'Establishing connection...'}
             </p>
           </motion.div>
         ) : (
@@ -454,7 +479,7 @@ export function ChatRoom() {
             className={styles.remoteVideo}
           >
             <video
-              ref={remoteVideoRef}
+              ref={remoteVideoCallbackRef}
               autoPlay
               playsInline
               aria-label="Remote partner video"

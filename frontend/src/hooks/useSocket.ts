@@ -239,11 +239,33 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
         }
 
         // Show actionable errors
-        setSocketError(`Session error: ${msg}`);
+        setSocketError(msg);
+
+        // Auto-dismiss actionable error after 4s so banner doesn't permanently block UI
+        if (errorDismissTimerRef.current) clearTimeout(errorDismissTimerRef.current);
+        errorDismissTimerRef.current = setTimeout(() => {
+          setSocketError(null);
+          errorDismissTimerRef.current = null;
+        }, 4000);
 
         // Reset joining phase on error so retry is possible
         if (queuePhaseRef.current === 'joining') {
           queuePhaseRef.current = 'idle';
+          if (code === 'RATE_LIMITED') {
+            // Auto-recover: after rate limit cools down (3.5s), automatically re-attempt queue join if still idle
+            setTimeout(() => {
+              if (queuePhaseRef.current === 'idle') {
+                const currentStatus = useCallStore.getState().status;
+                if (currentStatus === 'idle') {
+                  const s = getSocket();
+                  if (s?.connected) {
+                    queuePhaseRef.current = 'joining';
+                    s.emit(SocketEvents.JOIN_QUEUE, {});
+                  }
+                }
+              }
+            }, 3500);
+          }
         }
       });
 
@@ -301,11 +323,12 @@ export function useSocket(session: SessionInfo | null): UseSocketReturn {
   const skipPartner = useCallback(() => {
     const socket = getSocket();
     if (!socket?.connected) return;
-    // Reset phase — server will re-enqueue us and send QUEUE_JOINED
-    queuePhaseRef.current = 'idle';
+    // Advance phase directly to 'searching' — server will re-enqueue us and send QUEUE_JOINED.
+    // This prevents the auto-join effect from seeing 'idle' and firing duplicate join_queue.
+    queuePhaseRef.current = 'searching';
     socket.emit(SocketEvents.CHAT_NEXT);
-    setStatus('searching'); // optimistic UI
     resetCall();
+    setStatus('searching'); // setStatus after resetCall so status stays 'searching'
   }, [resetCall, setStatus]);
 
   const leaveChat = useCallback(() => {

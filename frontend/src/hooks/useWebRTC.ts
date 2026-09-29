@@ -389,7 +389,7 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
         // setLocalDescription, saving 100–500ms of ICE gathering time.
         const pc = new RTCPeerConnection({
           iceServers,
-          iceCandidatePoolSize: 4,
+          iceCandidatePoolSize: 2,
         });
         pcRef.current = pc;
 
@@ -406,21 +406,32 @@ export function useWebRTC(matchInfo: MatchInfo | null): UseWebRTCReturn {
           }
         };
 
-        // Phase 4C fix: store remote stream in state so ChatRoom.tsx can
-        // assign it to the <video> element in a post-paint useEffect.
-        // This resolves the race where ontrack fires before the video
-        // element enters the DOM (it's inside AnimatePresence mode="wait").
+        // Phase 4C/4G fix: Store remote stream in state using a new MediaStream reference
+        // so React detects track additions (e.g. video arriving after audio) and triggers
+        // re-assignment and play() in ChatRoom.tsx even on mobile browsers.
         pc.ontrack = (e) => {
-          const incomingStream = e.streams[0];
-          if (incomingStream) {
-            const T7 = Date.now();
-            console.log(`[WebRTC] T7 remote track received: ${T7 - T0}ms`);
-            setRemoteStream(incomingStream);
-            // Also try direct assignment if the ref is already mounted
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = incomingStream;
-            }
+          let incomingStream = e.streams[0];
+          if (!incomingStream) {
+            incomingStream = new MediaStream([e.track]);
           }
+          const T7 = Date.now();
+          console.log(`[WebRTC] T7 remote track received (${e.track.kind}): ${T7 - T0}ms`);
+          
+          // Create new MediaStream instance so reference changes and React state updates reliably
+          setRemoteStream(new MediaStream(incomingStream.getTracks()));
+          
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = incomingStream;
+            remoteVideoRef.current.play().catch((playErr) => {
+              console.warn('[WebRTC] remoteVideoRef auto-play call failed:', playErr);
+            });
+          }
+
+          e.track.onunmute = () => {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.play().catch(() => {});
+            }
+          };
         };
 
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;

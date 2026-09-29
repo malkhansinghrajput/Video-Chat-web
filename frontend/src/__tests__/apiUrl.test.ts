@@ -37,7 +37,7 @@ describe('Queue Phase State Machine (logic)', () => {
       if (phase === 'joining' || phase === 'searching') phase = 'idle';
     }
     function skipPartner() {
-      phase = 'idle'; // server re-enqueues, QUEUE_JOINED will advance
+      phase = 'searching'; // advance phase to searching so auto-join does not duplicate join_queue
       emitted.push('chat:next');
     }
 
@@ -102,13 +102,17 @@ describe('Queue Phase State Machine (logic)', () => {
     expect(m.emitted).toHaveLength(2);
   });
 
-  it('skip resets phase to idle for re-queue', () => {
+  it('skip sets phase to searching and prevents duplicate join_queue', () => {
     const m = createQueueMachine();
     m.joinQueue();
     m.onQueueJoined();
     m.onMatchFound();
-    m.skipPartner(); // phase → idle, server will re-enqueue
-    expect(m.getPhase()).toBe('idle');
+    m.skipPartner(); // phase → searching, server will re-enqueue
+    expect(m.getPhase()).toBe('searching');
+    expect(m.emitted).toContain('chat:next');
+    // Calling joinQueue while searching is blocked
+    m.joinQueue();
+    expect(m.emitted.filter((e) => e === 'join_queue')).toHaveLength(1);
     // QUEUE_JOINED from server advances it back to searching
     m.onQueueJoined();
     expect(m.getPhase()).toBe('searching');

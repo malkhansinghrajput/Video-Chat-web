@@ -1,4 +1,4 @@
-﻿// _____________________________________________
+// _____________________________________________
 // Socket.IO Event Name Constants
 // Single source of truth for all event names
 // _____________________________________________
@@ -72,7 +72,7 @@ export const RedisKeys = {
     report: (sessionId: string) => `ratelimit:report:${sessionId}`,
     api: (ipHash: string) => `ratelimit:api:${ipHash}`,
     sessionInit: (ipHash: string) => `ratelimit:init:${ipHash}`,
-    joinQueue: (sessionId: string) => `ratelimit:queue:${sessionId}`,
+    joinQueue: (sessionId: string) => `ratelimit:queue:v2:${sessionId}`,
   },
   analytics: {
     concurrentUsers: () => 'stats:concurrent_users',

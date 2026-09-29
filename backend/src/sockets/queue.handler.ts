@@ -4,6 +4,7 @@ import { queueService, roomService } from '../services/matching.service';
 import { logger, logError } from '../config/logger';
 import { SocketEvents, RedisKeys, ErrorCodes } from '../constants';
 import { redisRateLimit, redisAnalytics } from '../config/redis';
+import { atomicRateLimit } from '../middlewares/rateLimit.middleware';
 import { env } from '../config/env';
 import type { SocketData, QueueEntry, JoinQueuePayload } from '../types';
 
@@ -17,20 +18,19 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
   // ── join_queue ───────────────────────────
   socket.on(SocketEvents.JOIN_QUEUE, async (payload: JoinQueuePayload = {}) => {
     try {
-      // Rate limit: max 20 queue joins per hour
-      const limitKey = RedisKeys.rateLimit.joinQueue(data.sessionId);
-      const count = await redisRateLimit.incr(limitKey);
-      if (count === 1) await redisRateLimit.expire(limitKey, 3600);
-      if (count > 20) {
-        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.RATE_LIMITED, message: 'Too many queue joins. Slow down.' });
+      // Check already in queue first (Redis ZSET is ground truth for queue membership).
+      // Acknowledging already-queued requests does not consume rate limit quota.
+      const inQueue = await queueService.isInQueue(data.sessionId);
+      if (inQueue) {
+        socket.emit(SocketEvents.QUEUE_JOINED, { position: await queueService.getQueueDepth() });
         return;
       }
 
-      // Check already in queue (Redis ZSET is ground truth for queue membership)
-      const inQueue = await queueService.isInQueue(data.sessionId);
-      if (inQueue) {
-        // Already queued — acknowledge silently so the client is consistent
-        socket.emit(SocketEvents.QUEUE_JOINED, { position: await queueService.getQueueDepth() });
+      // Rate limit: max queue joins per window (atomic increment + TTL, protects against socket flooding)
+      const limitKey = RedisKeys.rateLimit.joinQueue(data.sessionId);
+      const count = await atomicRateLimit(limitKey, env.RATE_LIMIT_QUEUE_WINDOW_SECONDS);
+      if (count > env.RATE_LIMIT_QUEUE_MAX) {
+        socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.RATE_LIMITED, message: 'Too many queue joins. Slow down.' });
         return;
       }
 
@@ -127,10 +127,9 @@ export function handleQueueEvents(socket: Socket, _io: Server): void {
   // ── chat:next ────────────────────────────
   socket.on(SocketEvents.CHAT_NEXT, async () => {
     try {
-      // Rate limit: max N next per window (existing check)
+      // Rate limit: max N next per window (atomic increment + TTL)
       const limitKey = RedisKeys.rateLimit.next(data.sessionId);
-      const count = await redisRateLimit.incr(limitKey);
-      if (count === 1) await redisRateLimit.expire(limitKey, env.RATE_LIMIT_NEXT_WINDOW_SECONDS);
+      const count = await atomicRateLimit(limitKey, env.RATE_LIMIT_NEXT_WINDOW_SECONDS);
       if (count > env.RATE_LIMIT_NEXT_MAX) {
         socket.emit(SocketEvents.SESSION_ERROR, { code: ErrorCodes.RATE_LIMITED, message: 'Slow down — too many skips.' });
         return;

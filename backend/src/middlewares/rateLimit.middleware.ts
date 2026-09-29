@@ -19,7 +19,7 @@ end
 return count
 `;
 
-async function atomicRateLimit(key: string, windowSeconds: number): Promise<number> {
+export async function atomicRateLimit(key: string, windowSeconds: number): Promise<number> {
   const result = await redisRateLimit.eval(RATE_LIMIT_LUA, 1, key, String(windowSeconds));
   return typeof result === 'number' ? result : parseInt(String(result), 10);
 }
